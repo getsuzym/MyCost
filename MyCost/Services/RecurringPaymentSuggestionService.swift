@@ -35,29 +35,13 @@ struct RecurringPaymentSuggestionService {
     }
 
     func expectedMonthlyAmount(for recurringPayment: RecurringPayment) -> Decimal {
-        recurringPayment.expectedAmount * Decimal(monthlyMultiplier(
-            frequency: recurringPayment.frequency,
-            customIntervalDays: recurringPayment.customIntervalDays
-        ))
+        recurringPayment.expectedAmount * Decimal(
+            recurringPayment.frequency.monthlyMultiplier(customIntervalDays: recurringPayment.customIntervalDays)
+        )
     }
 
     func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency, customIntervalDays: Int = 30) -> Date? {
-        switch frequency {
-        case .none:
-            nil
-        case .weekly:
-            calendar.date(byAdding: .day, value: 7, to: date)
-        case .biweekly:
-            calendar.date(byAdding: .day, value: 14, to: date)
-        case .monthly:
-            calendar.date(byAdding: .month, value: 1, to: date)
-        case .quarterly:
-            calendar.date(byAdding: .month, value: 3, to: date)
-        case .yearly:
-            calendar.date(byAdding: .year, value: 1, to: date)
-        case .custom:
-            calendar.date(byAdding: .day, value: max(1, customIntervalDays), to: date)
-        }
+        frequency.nextDate(after: date, calendar: calendar, customIntervalDays: customIntervalDays)
     }
 
     private func suggestion(from transactions: [Transaction]) -> RecurringPaymentSuggestion? {
@@ -115,11 +99,11 @@ struct RecurringPaymentSuggestionService {
 
     private func bestIntervalMatch(intervals: [Int], transactionCount: Int) -> IntervalMatch? {
         let candidates: [(RecurrenceFrequency, Int, Int)] = [
-            (.weekly, 7, 2),
-            (.biweekly, 14, 3),
-            (.monthly, 30, 6),
-            (.quarterly, 91, 10),
-            (.yearly, 365, 21)
+            (.weekly, RecurrenceFrequency.weekly.defaultIntervalDays, 2),
+            (.biweekly, RecurrenceFrequency.biweekly.defaultIntervalDays, 3),
+            (.monthly, RecurrenceFrequency.monthly.defaultIntervalDays, 6),
+            (.quarterly, RecurrenceFrequency.quarterly.defaultIntervalDays, 10),
+            (.yearly, RecurrenceFrequency.yearly.defaultIntervalDays, 21)
         ]
 
         let matches = candidates.compactMap { frequency, targetDays, tolerance -> IntervalMatch? in
@@ -178,25 +162,6 @@ struct RecurringPaymentSuggestionService {
             .map { abs($0 - average) }
             .max() ?? 0
         return maxDifference / absoluteAverage
-    }
-
-    private func monthlyMultiplier(frequency: RecurrenceFrequency, customIntervalDays: Int) -> Double {
-        switch frequency {
-        case .none:
-            0
-        case .weekly:
-            52.0 / 12.0
-        case .biweekly:
-            26.0 / 12.0
-        case .monthly:
-            1
-        case .quarterly:
-            1.0 / 3.0
-        case .yearly:
-            1.0 / 12.0
-        case .custom:
-            30.4375 / Double(max(1, customIntervalDays))
-        }
     }
 
     private func looksLikeHighFrequencyIncidental(

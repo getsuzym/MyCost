@@ -92,6 +92,16 @@ struct ReviewTransactionsView: View {
         guard !draftsToImport.isEmpty else { return }
         saveMessage = nil
 
+        let duplicateScan = flagDuplicateDrafts()
+        if duplicateScan.hasBlockedSave {
+            saveMessage = duplicateScan.message
+            return
+        }
+
+        saveDrafts(draftsToImport)
+    }
+
+    private func flagDuplicateDrafts() -> DuplicateDraftScanResult {
         let existingSnapshots = transactions.map(DuplicateTransactionSnapshot.init(transaction:))
         var stagedSnapshots = existingSnapshots
         var blockedCount = 0
@@ -126,11 +136,10 @@ struct ReviewTransactionsView: View {
             stagedSnapshots.append(incomingSnapshot)
         }
 
-        if blockedCount > 0 || mediumMatchCount > 0 {
-            saveMessage = "\(blockedCount) duplicate\(blockedCount == 1 ? "" : "s") blocked. Choose Merge, Keep Both, or Review for \(mediumMatchCount) possible match\(mediumMatchCount == 1 ? "" : "es")."
-            return
-        }
+        return DuplicateDraftScanResult(blockedCount: blockedCount, mediumMatchCount: mediumMatchCount)
+    }
 
+    private func saveDrafts(_ draftsToImport: [OCRTransactionDraft]) {
         for draft in draftsToImport {
             guard let amount = draft.parsedAmount else { continue }
             let selectedCategory = categories.first { $0.id == draft.selectedCategoryID }
@@ -189,6 +198,26 @@ struct ReviewTransactionsView: View {
             category: category,
             modelContext: modelContext
         )
+    }
+}
+
+private struct DuplicateDraftScanResult {
+    let blockedCount: Int
+    let mediumMatchCount: Int
+
+    var hasBlockedSave: Bool {
+        blockedCount > 0 || mediumMatchCount > 0
+    }
+
+    var message: String {
+        var messages: [String] = []
+        if blockedCount > 0 {
+            messages.append("\(blockedCount) duplicate\(blockedCount == 1 ? "" : "s") blocked.")
+        }
+        if mediumMatchCount > 0 {
+            messages.append("Choose Merge, Keep Both, or Review for \(mediumMatchCount) possible match\(mediumMatchCount == 1 ? "" : "es").")
+        }
+        return messages.joined(separator: " ")
     }
 }
 

@@ -279,7 +279,13 @@ struct TransactionEditorView: View {
             }
         }
 
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            validationMessage = "Save failed: \(error.localizedDescription)"
+            return
+        }
+
         if pendingMerchantLearning != nil {
             return
         }
@@ -300,8 +306,7 @@ struct TransactionEditorView: View {
             transaction.category = categories.first { $0.id == pendingManualDraft.selectedCategoryID }
             transaction.duplicateState = .unique
             transaction.updatedAt = .now
-            try? modelContext.save()
-            dismiss()
+            saveAndDismiss()
             return
         }
 
@@ -309,8 +314,7 @@ struct TransactionEditorView: View {
             pendingManualDraft,
             duplicateState: decision == .review ? .possibleDuplicate : .unique
         )
-        try? modelContext.save()
-        dismiss()
+        saveAndDismiss()
     }
 
     private func insertManualDraft(_ draft: ManualTransactionDraft, duplicateState: DuplicateState) {
@@ -393,6 +397,15 @@ struct TransactionEditorView: View {
         )
         self.pendingMerchantLearning = nil
         dismiss()
+    }
+
+    private func saveAndDismiss() {
+        do {
+            try modelContext.save()
+            dismiss()
+        } catch {
+            validationMessage = "Save failed: \(error.localizedDescription)"
+        }
     }
 
 }
