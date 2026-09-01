@@ -32,6 +32,13 @@ struct RootTabView: View {
             }
 
             NavigationStack {
+                MerchantRulesView()
+            }
+            .tabItem {
+                Label("Rules", systemImage: "wand.and.stars")
+            }
+
+            NavigationStack {
                 TransactionHistoryView()
             }
             .tabItem {

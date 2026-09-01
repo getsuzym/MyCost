@@ -100,7 +100,7 @@ final class Transaction {
         self.id = id
         self.accountName = accountName
         self.merchantName = merchantName
-        self.originalDescription = originalDescription
+        self.originalDescription = originalDescription.isEmpty ? merchantName : originalDescription
         self.amount = amount
         self.transactionDate = transactionDate
         self.postedDate = postedDate

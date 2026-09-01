@@ -1,7 +1,10 @@
+import SwiftData
 import SwiftUI
 
 struct ImportView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
+
+    @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
 
     @State private var isShowingImagePicker = false
     @State private var selectedImage: UIImage?
@@ -92,7 +95,7 @@ struct ImportView: View {
                 let result = try await importService.processScreenshot(image)
                 await MainActor.run {
                     recognizedTextBlocks = result.recognizedTextBlocks
-                    ocrReviewStore.replaceCandidates(result.transactionCandidates)
+                    ocrReviewStore.replaceCandidates(result.transactionCandidates, merchantRules: merchantRules)
                     statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks and detected \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
                     isProcessing = false
                 }

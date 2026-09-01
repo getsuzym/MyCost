@@ -12,6 +12,7 @@ struct TransactionEditorView: View {
 
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
+    @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
 
     let mode: TransactionEditorMode
 
@@ -29,8 +30,10 @@ struct TransactionEditorView: View {
     @State private var validationMessage: String?
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
+    @State private var pendingMerchantLearning: MerchantLearningPrompt?
 
     private let duplicateMatchingService = DuplicateMatchingService()
+    private let merchantRuleService = MerchantRuleService()
 
     private var title: String {
         switch mode {
@@ -130,6 +133,27 @@ struct TransactionEditorView: View {
         } message: {
             Text("A similar transaction already exists. Choose how to handle this one.")
         }
+        .confirmationDialog(
+            "Remember merchant change?",
+            isPresented: Binding(
+                get: { pendingMerchantLearning != nil },
+                set: { if !$0 { pendingMerchantLearning = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remember") {
+                rememberPendingMerchantChange()
+            }
+            Button("Only This Transaction") {
+                pendingMerchantLearning = nil
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingMerchantLearning = nil
+            }
+        } message: {
+            Text("Save a rule for similar future transactions.")
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") {
@@ -178,13 +202,15 @@ struct TransactionEditorView: View {
 
         switch mode {
         case .add:
+            let ruleApplication = merchantRuleService.application(for: trimmedMerchantName, rules: merchantRules)
             let draft = ManualTransactionDraft(
                 accountName: trimmedAccountName.isEmpty ? "Default" : trimmedAccountName,
-                merchantName: trimmedMerchantName,
+                merchantName: ruleApplication?.displayName ?? trimmedMerchantName,
+                originalDescription: trimmedMerchantName,
                 amount: amount,
                 transactionDate: transactionDate,
                 status: status,
-                selectedCategoryID: selectedCategoryID,
+                selectedCategoryID: selectedCategoryID ?? ruleApplication?.category?.id,
                 isExcluded: isExcluded,
                 excludedReason: isExcluded ? excludedReason : "",
                 isRecurring: isRecurring,
@@ -216,6 +242,7 @@ struct TransactionEditorView: View {
 
         case .edit(let transaction):
             let originalMerchantName = transaction.merchantName
+            let originalCategoryID = transaction.category?.id
             transaction.accountName = trimmedAccountName.isEmpty ? "Default" : trimmedAccountName
             transaction.merchantName = trimmedMerchantName
             transaction.amount = amount
@@ -229,12 +256,19 @@ struct TransactionEditorView: View {
             transaction.updatedAt = .now
             updateRecurringPayment(for: transaction, category: selectedCategory, frequency: recurrenceFrequency)
 
-            if originalMerchantName != trimmedMerchantName {
-                createMerchantRuleIfRenamed(from: originalMerchantName, to: trimmedMerchantName, category: selectedCategory)
+            if originalMerchantName != trimmedMerchantName || originalCategoryID != selectedCategory?.id {
+                pendingMerchantLearning = MerchantLearningPrompt(
+                    matchText: transaction.originalDescription.isEmpty ? originalMerchantName : transaction.originalDescription,
+                    displayName: trimmedMerchantName,
+                    categoryID: selectedCategory?.id
+                )
             }
         }
 
         try? modelContext.save()
+        if pendingMerchantLearning != nil {
+            return
+        }
         dismiss()
     }
 
@@ -245,6 +279,7 @@ struct TransactionEditorView: View {
            let transaction = transactions.first(where: { $0.id == pendingDuplicateTransactionID }) {
             transaction.accountName = pendingManualDraft.accountName
             transaction.merchantName = pendingManualDraft.merchantName
+            transaction.originalDescription = pendingManualDraft.originalDescription
             transaction.amount = pendingManualDraft.amount
             transaction.transactionDate = pendingManualDraft.transactionDate
             transaction.status = pendingManualDraft.status
@@ -269,6 +304,7 @@ struct TransactionEditorView: View {
         let transaction = Transaction(
             accountName: draft.accountName,
             merchantName: draft.merchantName,
+            originalDescription: draft.originalDescription,
             amount: draft.amount,
             transactionDate: draft.transactionDate,
             status: draft.status,
@@ -310,9 +346,17 @@ struct TransactionEditorView: View {
         transaction.recurringPayment = recurringPayment
     }
 
-    private func createMerchantRuleIfRenamed(from matchText: String? = nil, to displayName: String, category: Category?) {
-        let rule = MerchantRule(matchText: matchText ?? displayName, displayName: displayName, category: category)
-        modelContext.insert(rule)
+    private func rememberPendingMerchantChange() {
+        guard let pendingMerchantLearning else { return }
+        let category = categories.first { $0.id == pendingMerchantLearning.categoryID }
+        merchantRuleService.rememberRule(
+            matchText: pendingMerchantLearning.matchText,
+            displayName: pendingMerchantLearning.displayName,
+            category: category,
+            modelContext: modelContext
+        )
+        self.pendingMerchantLearning = nil
+        dismiss()
     }
 
     private func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency) -> Date? {
@@ -332,6 +376,7 @@ struct TransactionEditorView: View {
 private struct ManualTransactionDraft {
     let accountName: String
     let merchantName: String
+    let originalDescription: String
     let amount: Decimal
     let transactionDate: Date
     let status: TransactionStatus
@@ -341,4 +386,11 @@ private struct ManualTransactionDraft {
     let isRecurring: Bool
     let recurrenceFrequency: RecurrenceFrequency
     let note: String
+}
+
+private struct MerchantLearningPrompt: Identifiable {
+    let id = UUID()
+    let matchText: String
+    let displayName: String
+    let categoryID: UUID?
 }

@@ -10,6 +10,7 @@ struct ReviewTransactionsView: View {
 
     @State private var saveMessage: String?
     private let duplicateMatchingService = DuplicateMatchingService()
+    private let merchantRuleService = MerchantRuleService()
 
     private var possibleDuplicates: [Transaction] {
         transactions.filter { $0.duplicateState == .possibleDuplicate }
@@ -136,6 +137,7 @@ struct ReviewTransactionsView: View {
 
             if draft.duplicateSummary != nil, draft.duplicateDecision == .merge, let duplicateMatchID = draft.duplicateMatchID {
                 merge(draft: draft, amount: amount, intoTransactionID: duplicateMatchID, category: selectedCategory)
+                rememberMerchantRuleIfNeeded(for: draft, category: selectedCategory)
                 continue
             }
 
@@ -150,6 +152,7 @@ struct ReviewTransactionsView: View {
                 category: selectedCategory
             )
             modelContext.insert(transaction)
+            rememberMerchantRuleIfNeeded(for: draft, category: selectedCategory)
         }
 
         do {
@@ -172,6 +175,20 @@ struct ReviewTransactionsView: View {
         transaction.category = category
         transaction.duplicateState = .unique
         transaction.updatedAt = .now
+    }
+
+    private func rememberMerchantRuleIfNeeded(for draft: OCRTransactionDraft, category: Category?) {
+        guard draft.shouldRememberMerchantRule else { return }
+        let merchantChanged = draft.trimmedMerchantName != draft.parsedMerchantName
+        let categorySelected = category != nil
+        guard merchantChanged || categorySelected else { return }
+
+        merchantRuleService.rememberRule(
+            matchText: draft.sourceText,
+            displayName: draft.trimmedMerchantName,
+            category: category,
+            modelContext: modelContext
+        )
     }
 }
 
@@ -227,6 +244,9 @@ private struct OCRTransactionDraftRow: View {
                 }
             }
             .accessibilityIdentifier("review.category")
+
+            Toggle("Remember merchant rule", isOn: $draft.shouldRememberMerchantRule)
+                .accessibilityIdentifier("review.rememberMerchantRule")
 
             highlightedField(field: .status) {
                 Picker("Status", selection: $draft.status) {

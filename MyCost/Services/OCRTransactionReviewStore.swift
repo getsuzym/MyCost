@@ -27,6 +27,7 @@ enum DuplicateReviewDecision: String, CaseIterable, Identifiable {
 
 struct OCRTransactionDraft: Identifiable, Equatable {
     let id: UUID
+    let parsedMerchantName: String
     let sourceText: String
     let originalOCRText: String
     let validationFlags: Set<TransactionCandidateValidationFlag>
@@ -42,9 +43,11 @@ struct OCRTransactionDraft: Identifiable, Equatable {
     var duplicateDecision: DuplicateReviewDecision
     var duplicateMatchID: UUID?
     var duplicateSummary: String?
+    var shouldRememberMerchantRule: Bool
 
     init(candidate: TransactionCandidate, referenceDate: Date = .now) {
         id = candidate.id
+        parsedMerchantName = candidate.rawMerchantDescription
         sourceText = candidate.sourceText
         originalOCRText = candidate.originalOCRText
         validationFlags = candidate.validationFlags
@@ -59,6 +62,14 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         duplicateDecision = .review
         duplicateMatchID = nil
         duplicateSummary = nil
+        shouldRememberMerchantRule = false
+    }
+
+    mutating func applyMerchantRule(_ application: MerchantRuleApplication) {
+        merchantName = application.displayName
+        if let category = application.category {
+            selectedCategoryID = category.id
+        }
     }
 
     var trimmedMerchantName: String {
@@ -128,6 +139,17 @@ final class OCRTransactionReviewStore: ObservableObject {
 
     func replaceCandidates(_ candidates: [TransactionCandidate], referenceDate: Date = .now) {
         drafts = candidates.map { OCRTransactionDraft(candidate: $0, referenceDate: referenceDate) }
+    }
+
+    func replaceCandidates(_ candidates: [TransactionCandidate], merchantRules: [MerchantRule], referenceDate: Date = .now) {
+        let service = MerchantRuleService()
+        drafts = candidates.map { candidate in
+            var draft = OCRTransactionDraft(candidate: candidate, referenceDate: referenceDate)
+            if let application = service.application(for: candidate.sourceText, rules: merchantRules) {
+                draft.applyMerchantRule(application)
+            }
+            return draft
+        }
     }
 
     func removeDraft(id: UUID) {

@@ -165,28 +165,51 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(transaction.recurringPayment?.category?.name, "Subscriptions")
     }
 
-    func testMerchantRuleRenamesMatchingTransactionsAndAssignsCategory() throws {
+    func testMerchantRuleAppliesToNormalizedProcessorDescriptions() throws {
         let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
-        let first = Transaction(merchantName: "SQ COFFEE BAR", amount: 5, transactionDate: date(2026, 8, 10))
-        let second = Transaction(merchantName: "SQ COFFEE BAR", amount: 6, transactionDate: date(2026, 8, 11))
-        let unrelated = Transaction(merchantName: "Book Shop", amount: 14, transactionDate: date(2026, 8, 12))
-        [dining, first, second, unrelated].forEach { context.insert($0) }
-
-        MerchantRuleService().renameMerchant(
-            currentName: "SQ COFFEE BAR",
-            to: "Coffee Bar",
-            transactions: [first, second, unrelated],
-            category: dining,
-            modelContext: context
+        let rule = MerchantRule(matchText: "SQ* Coffee Bar #4821 SAN FRANCISCO CA", displayName: "Coffee Bar", category: dining)
+        let transaction = Transaction(
+            merchantName: "SQ* COFFEE BAR 4821",
+            originalDescription: "CHECKCARD SQ* COFFEE BAR #4821 SAN FRANCISCO CA REF 928177",
+            amount: 5,
+            transactionDate: date(2026, 8, 10)
         )
 
-        let rules = try context.fetch(FetchDescriptor<MerchantRule>())
-        XCTAssertEqual(rules.count, 1)
-        XCTAssertEqual(rules[0].matchText, "SQ COFFEE BAR")
-        XCTAssertEqual(rules[0].displayName, "Coffee Bar")
-        XCTAssertEqual(first.merchantName, "Coffee Bar")
-        XCTAssertEqual(second.category?.name, "Dining")
-        XCTAssertEqual(unrelated.merchantName, "Book Shop")
+        MerchantRuleService().applyRules(to: transaction, rules: [rule])
+
+        XCTAssertEqual(transaction.merchantName, "Coffee Bar")
+        XCTAssertEqual(transaction.category?.name, "Dining")
+    }
+
+    func testMerchantRuleNormalizerHandlesCommonBankNoiseWithoutOvermatching() {
+        let coffee = MerchantRuleNormalizer.normalizedMerchantKey(for: "SQ* Coffee Bar #4821 SAN FRANCISCO CA")
+        let bookstore = MerchantRuleNormalizer.normalizedMerchantKey(for: "PAYPAL* BOOK SHOP LLC REF 993882")
+        let amazon = MerchantRuleNormalizer.normalizedMerchantKey(for: "AMZN Mktp US*2L88Z4Y03")
+
+        XCTAssertEqual(coffee, "COFFEE BAR SAN FRANCISCO CA")
+        XCTAssertEqual(bookstore, "BOOK SHOP")
+        XCTAssertEqual(amazon, "AMAZON")
+        XCTAssertNotEqual(coffee, bookstore)
+    }
+
+    func testMerchantRuleServiceIgnoresDisabledRules() {
+        let rule = MerchantRule(matchText: "PAYPAL* Book Shop", displayName: "Book Shop", isEnabled: false)
+
+        let match = MerchantRuleService().bestRule(for: "PAYPAL* BOOK SHOP REF 12345", rules: [rule])
+
+        XCTAssertNil(match)
+    }
+
+    func testMerchantRuleServicePrefersMostSpecificConflictingRule() {
+        let general = MerchantRule(matchText: "Amazon", displayName: "Amazon")
+        let specific = MerchantRule(matchText: "Amazon Fresh", displayName: "Amazon Fresh")
+
+        let match = MerchantRuleService().bestRule(
+            for: "AMZN MKTPLACE AMAZON FRESH REF 839202",
+            rules: [general, specific]
+        )
+
+        XCTAssertEqual(match?.displayName, "Amazon Fresh")
     }
 
     func testTransactionCandidateParserParsesMultipleSingleLineTransactions() {
