@@ -9,7 +9,7 @@ struct ReviewTransactionsView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
 
     @State private var saveMessage: String?
-    private let duplicateMatchingService = DuplicateMatchingService()
+    private let importCoordinator = OCRTransactionImportCoordinator()
     private let merchantRuleService = MerchantRuleService()
 
     private var possibleDuplicates: [Transaction] {
@@ -92,51 +92,16 @@ struct ReviewTransactionsView: View {
         guard !draftsToImport.isEmpty else { return }
         saveMessage = nil
 
-        let duplicateScan = flagDuplicateDrafts()
-        if duplicateScan.hasBlockedSave {
+        let duplicateScan = ocrReviewStore.flagDuplicates(
+            existingTransactions: transactions.map(DuplicateTransactionSnapshot.init(transaction:)),
+            coordinator: importCoordinator
+        )
+        if duplicateScan.needsUserDecision {
             saveMessage = duplicateScan.message
             return
         }
 
         saveDrafts(draftsToImport)
-    }
-
-    private func flagDuplicateDrafts() -> DuplicateDraftScanResult {
-        let existingSnapshots = transactions.map(DuplicateTransactionSnapshot.init(transaction:))
-        var stagedSnapshots = existingSnapshots
-        var blockedCount = 0
-        var mediumMatchCount = 0
-
-        for index in ocrReviewStore.drafts.indices {
-            guard ocrReviewStore.drafts[index].isSelected,
-                  let incomingSnapshot = ocrReviewStore.drafts[index].duplicateSnapshot() else {
-                continue
-            }
-
-            if let highMatch = duplicateMatchingService.highConfidenceDuplicate(
-                for: incomingSnapshot,
-                against: stagedSnapshots
-            ) {
-                ocrReviewStore.drafts[index].isSelected = false
-                ocrReviewStore.drafts[index].duplicateMatchID = highMatch.existing.id
-                ocrReviewStore.drafts[index].duplicateSummary = "High-confidence duplicate was not selected for import."
-                blockedCount += 1
-                continue
-            }
-
-            if ocrReviewStore.drafts[index].duplicateSummary == nil,
-               let mediumMatch = duplicateMatchingService.bestMatch(for: incomingSnapshot, against: stagedSnapshots),
-               mediumMatch.confidence == .medium {
-                ocrReviewStore.drafts[index].duplicateMatchID = mediumMatch.existing.id
-                ocrReviewStore.drafts[index].duplicateSummary = "Possible duplicate of \(mediumMatch.existing.merchantName) for \(NSDecimalNumber(decimal: mediumMatch.existing.amount).stringValue)."
-                mediumMatchCount += 1
-                continue
-            }
-
-            stagedSnapshots.append(incomingSnapshot)
-        }
-
-        return DuplicateDraftScanResult(blockedCount: blockedCount, mediumMatchCount: mediumMatchCount)
     }
 
     private func saveDrafts(_ draftsToImport: [OCRTransactionDraft]) {
@@ -196,28 +161,9 @@ struct ReviewTransactionsView: View {
             matchText: draft.sourceText,
             displayName: draft.trimmedMerchantName,
             category: category,
-            modelContext: modelContext
+            modelContext: modelContext,
+            saveImmediately: false
         )
-    }
-}
-
-private struct DuplicateDraftScanResult {
-    let blockedCount: Int
-    let mediumMatchCount: Int
-
-    var hasBlockedSave: Bool {
-        blockedCount > 0 || mediumMatchCount > 0
-    }
-
-    var message: String {
-        var messages: [String] = []
-        if blockedCount > 0 {
-            messages.append("\(blockedCount) duplicate\(blockedCount == 1 ? "" : "s") blocked.")
-        }
-        if mediumMatchCount > 0 {
-            messages.append("Choose Merge, Keep Both, or Review for \(mediumMatchCount) possible match\(mediumMatchCount == 1 ? "" : "es").")
-        }
-        return messages.joined(separator: " ")
     }
 }
 

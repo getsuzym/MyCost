@@ -33,6 +33,7 @@
 		000000000000000000000118 /* MerchantRulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* MerchantRulesView.swift */; };
 		000000000000000000000119 /* RecurringPaymentSuggestionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001A /* RecurringPaymentSuggestionService.swift */; };
 		00000000000000000000011A /* RecurringPaymentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001B /* RecurringPaymentsView.swift */; };
+		00000000000000000000011B /* OCRTransactionImportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001C /* OCRTransactionImportCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +64,7 @@
 		000000000000000000000019 /* MerchantRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRulesView.swift; sourceTree = "<group>"; };
 		00000000000000000000001A /* RecurringPaymentSuggestionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentSuggestionService.swift; sourceTree = "<group>"; };
 		00000000000000000000001B /* RecurringPaymentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentsView.swift; sourceTree = "<group>"; };
+		00000000000000000000001C /* OCRTransactionImportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTransactionImportCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,6 +119,7 @@
 				000000000000000000000015 /* VisionOCRService.swift */,
 				000000000000000000000017 /* TransactionCandidateParser.swift */,
 				000000000000000000000018 /* OCRTransactionReviewStore.swift */,
+				00000000000000000000001C /* OCRTransactionImportCoordinator.swift */,
 				000000000000000000000009 /* MerchantRuleService.swift */,
 				00000000000000000000000A /* SpendingAnalytics.swift */,
 				00000000000000000000001A /* RecurringPaymentSuggestionService.swift */,
@@ -269,6 +272,7 @@
 				000000000000000000000114 /* VisionOCRService.swift in Sources */,
 				000000000000000000000116 /* TransactionCandidateParser.swift in Sources */,
 				000000000000000000000117 /* OCRTransactionReviewStore.swift in Sources */,
+				00000000000000000000011B /* OCRTransactionImportCoordinator.swift in Sources */,
 				000000000000000000000109 /* MerchantRuleService.swift in Sources */,
 				00000000000000000000010A /* SpendingAnalytics.swift in Sources */,
 				000000000000000000000119 /* RecurringPaymentSuggestionService.swift in Sources */,

@@ -165,6 +165,32 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(transaction.recurringPayment?.category?.name, "Subscriptions")
     }
 
+    func testDeletingRecurringPaymentNullifiesTransactionRelationship() throws {
+        let recurringPayment = RecurringPayment(
+            merchantName: "Cloud Storage",
+            expectedAmount: 9.99,
+            frequency: .monthly
+        )
+        let transaction = Transaction(
+            merchantName: "Cloud Storage",
+            amount: 9.99,
+            transactionDate: date(2026, 8, 1),
+            isRecurring: true,
+            recurringPayment: recurringPayment
+        )
+
+        context.insert(recurringPayment)
+        context.insert(transaction)
+        try context.save()
+
+        context.delete(recurringPayment)
+        try context.save()
+
+        let savedTransactions = try context.fetch(FetchDescriptor<Transaction>())
+        XCTAssertEqual(savedTransactions.count, 1)
+        XCTAssertNil(savedTransactions[0].recurringPayment)
+    }
+
     func testMerchantRuleAppliesToNormalizedProcessorDescriptions() throws {
         let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
         let rule = MerchantRule(matchText: "SQ* Coffee Bar #4821 SAN FRANCISCO CA", displayName: "Coffee Bar", category: dining)
@@ -339,6 +365,90 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(draft.isUncertain(.merchant))
         XCTAssertTrue(draft.isUncertain(.amount))
         XCTAssertTrue(draft.isUncertain(.status))
+    }
+
+    func testMalformedOCRCandidateRemainsReviewableButCannotImportUntilFixed() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+
+        let candidates = parser.parse(lines: [
+            "08/29/2026",
+            "Pending"
+        ])
+
+        XCTAssertEqual(candidates.count, 1)
+        let draft = OCRTransactionDraft(candidate: candidates[0], referenceDate: date(2026, 8, 31))
+        XCTAssertEqual(draft.transactionDate, date(2026, 8, 29))
+        XCTAssertEqual(draft.status, .pending)
+        XCTAssertFalse(draft.canImport)
+        XCTAssertTrue(draft.isUncertain(.merchant))
+        XCTAssertTrue(draft.isUncertain(.amount))
+    }
+
+    func testMerchantRulesApplyBeforeOCRReviewCategorization() {
+        let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
+        let rule = MerchantRule(
+            matchText: "SQ* Coffee Bar",
+            displayName: "Coffee Bar",
+            category: dining
+        )
+        let candidate = TransactionCandidate(
+            detectedDate: date(2026, 8, 24),
+            rawMerchantDescription: "SQ COFFEE BAR",
+            amount: 6.25,
+            status: .posted,
+            originalOCRText: "SQ* COFFEE BAR #1234 $6.25 Posted",
+            sourceText: "SQ* COFFEE BAR #1234 $6.25 Posted",
+            confidence: TransactionCandidateFieldConfidences(date: 0.95, merchantDescription: 0.8, amount: 0.95, status: 0.95),
+            validationFlags: []
+        )
+        let store = OCRTransactionReviewStore()
+
+        store.replaceCandidates([candidate], merchantRules: [rule], referenceDate: date(2026, 8, 31))
+
+        XCTAssertEqual(store.drafts.count, 1)
+        XCTAssertEqual(store.drafts[0].merchantName, "Coffee Bar")
+        XCTAssertEqual(store.drafts[0].selectedCategoryID, dining.id)
+    }
+
+    func testOCRImportCoordinatorBlocksRepeatedScreenshotImport() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        let candidates = parser.parse(ocrText: "08/28/2026 STARBUCKS STORE $5.48 Pending")
+        var drafts = candidates.map { OCRTransactionDraft(candidate: $0, referenceDate: date(2026, 8, 31)) }
+        let existing = DuplicateTransactionSnapshot(
+            accountName: "Default",
+            merchantName: "STARBUCKS STORE",
+            originalDescription: "08/28/2026 STARBUCKS STORE $5.48 Pending",
+            amount: 5.48,
+            transactionDate: date(2026, 8, 28),
+            status: .pending
+        )
+
+        let result = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &drafts,
+            existingTransactions: [existing]
+        )
+
+        XCTAssertEqual(result.blockedCount, 1)
+        XCTAssertFalse(drafts[0].isSelected)
+        XCTAssertNotNil(drafts[0].duplicateSummary)
+    }
+
+    func testOCRImportCoordinatorBlocksDuplicatesWithinSameImportBatch() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        let candidates = parser.parse(ocrText: """
+        08/28/2026 STARBUCKS STORE $5.48 Pending
+        08/28/2026 STARBUCKS STORE $5.48 Pending
+        """)
+        var drafts = candidates.map { OCRTransactionDraft(candidate: $0, referenceDate: date(2026, 8, 31)) }
+
+        let result = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &drafts,
+            existingTransactions: []
+        )
+
+        XCTAssertEqual(result.blockedCount, 1)
+        XCTAssertEqual(drafts.filter(\.isSelected).count, 1)
+        XCTAssertNotNil(drafts.first { !$0.isSelected }?.duplicateSummary)
     }
 
     func testDuplicateMatcherDetectsRepeatedScreenshotImportAsHighConfidence() {
@@ -551,6 +661,29 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.recurringTotal, 12)
         XCTAssertEqual(summary.nonRecurringTotal, 8)
         XCTAssertEqual(summary.expectedMonthlyRecurringTotal, 12)
+    }
+
+    func testSpendingSummaryHandlesRefundsInRecurringAndNonRecurringTotals() {
+        let refund = Transaction(
+            merchantName: "Online Store",
+            amount: -12,
+            transactionDate: date(2026, 8, 4)
+        )
+        let recurringRefund = Transaction(
+            merchantName: "Utility",
+            amount: -5,
+            transactionDate: date(2026, 8, 5),
+            isRecurring: true
+        )
+
+        let summary = SpendingAnalytics().monthlySummary(
+            for: date(2026, 8, 15),
+            transactions: [refund, recurringRefund]
+        )
+
+        XCTAssertEqual(summary.total, -17)
+        XCTAssertEqual(summary.recurringTotal, -5)
+        XCTAssertEqual(summary.nonRecurringTotal, -12)
     }
 
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {

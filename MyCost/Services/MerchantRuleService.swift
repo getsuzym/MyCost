@@ -110,7 +110,8 @@ struct MerchantRuleService {
         matchText: String,
         displayName: String,
         category: Category?,
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        saveImmediately: Bool = true
     ) {
         let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedMatchText = matchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -124,7 +125,9 @@ struct MerchantRuleService {
             category: category
         )
         modelContext.insert(rule)
-        try? modelContext.save()
+        if saveImmediately {
+            try? modelContext.save()
+        }
     }
 
     @MainActor

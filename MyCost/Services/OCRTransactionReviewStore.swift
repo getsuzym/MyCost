@@ -160,6 +160,16 @@ final class OCRTransactionReviewStore: ObservableObject {
         drafts.removeAll { ids.contains($0.id) }
     }
 
+    func flagDuplicates(
+        existingTransactions: [DuplicateTransactionSnapshot],
+        coordinator: OCRTransactionImportCoordinator = OCRTransactionImportCoordinator()
+    ) -> OCRDuplicateScanResult {
+        coordinator.flagDuplicateDrafts(
+            drafts: &drafts,
+            existingTransactions: existingTransactions
+        )
+    }
+
     func clear() {
         drafts = []
     }
