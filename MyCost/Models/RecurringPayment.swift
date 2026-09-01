@@ -4,9 +4,11 @@ import SwiftData
 @Model
 final class RecurringPayment {
     @Attribute(.unique) var id: UUID
+    var accountName: String
     var merchantName: String
     var expectedAmount: Decimal
     var frequency: RecurrenceFrequency
+    var customIntervalDays: Int
     var nextExpectedDate: Date?
     var isActive: Bool
     var createdAt: Date
@@ -19,9 +21,11 @@ final class RecurringPayment {
 
     init(
         id: UUID = UUID(),
+        accountName: String = "Default",
         merchantName: String,
         expectedAmount: Decimal,
         frequency: RecurrenceFrequency = .monthly,
+        customIntervalDays: Int = 30,
         nextExpectedDate: Date? = nil,
         isActive: Bool = true,
         category: Category? = nil,
@@ -29,9 +33,11 @@ final class RecurringPayment {
         updatedAt: Date = .now
     ) {
         self.id = id
+        self.accountName = accountName
         self.merchantName = merchantName
         self.expectedAmount = expectedAmount
         self.frequency = frequency
+        self.customIntervalDays = customIntervalDays
         self.nextExpectedDate = nextExpectedDate
         self.isActive = isActive
         self.category = category

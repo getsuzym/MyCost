@@ -26,6 +26,7 @@ struct TransactionEditorView: View {
     @State private var excludedReason = ""
     @State private var isRecurring = false
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
+    @State private var customIntervalDays = 30
     @State private var note = ""
     @State private var validationMessage: String?
     @State private var pendingManualDraft: ManualTransactionDraft?
@@ -34,6 +35,7 @@ struct TransactionEditorView: View {
 
     private let duplicateMatchingService = DuplicateMatchingService()
     private let merchantRuleService = MerchantRuleService()
+    private let recurringSuggestionService = RecurringPaymentSuggestionService()
 
     private var title: String {
         switch mode {
@@ -92,6 +94,11 @@ struct TransactionEditorView: View {
                         ForEach(RecurrenceFrequency.allCases.filter { $0 != .none }) { frequency in
                             Text(frequency.label).tag(frequency)
                         }
+                    }
+
+                    if recurrenceFrequency == .custom {
+                        Stepper("Every \(customIntervalDays) days", value: $customIntervalDays, in: 1...365)
+                            .accessibilityIdentifier("transactionEditor.customIntervalDays")
                     }
                 }
             }
@@ -182,6 +189,7 @@ struct TransactionEditorView: View {
         excludedReason = transaction.excludedReason
         isRecurring = transaction.isRecurring
         recurrenceFrequency = transaction.recurringPayment?.frequency ?? .monthly
+        customIntervalDays = transaction.recurringPayment?.customIntervalDays ?? 30
         note = transaction.note
     }
 
@@ -215,6 +223,7 @@ struct TransactionEditorView: View {
                 excludedReason: isExcluded ? excludedReason : "",
                 isRecurring: isRecurring,
                 recurrenceFrequency: recurrenceFrequency,
+                customIntervalDays: customIntervalDays,
                 note: note
             )
             let incoming = DuplicateTransactionSnapshot(
@@ -254,7 +263,12 @@ struct TransactionEditorView: View {
             transaction.isRecurring = isRecurring
             transaction.note = note
             transaction.updatedAt = .now
-            updateRecurringPayment(for: transaction, category: selectedCategory, frequency: recurrenceFrequency)
+            updateRecurringPayment(
+                for: transaction,
+                category: selectedCategory,
+                frequency: recurrenceFrequency,
+                customIntervalDays: customIntervalDays
+            )
 
             if originalMerchantName != trimmedMerchantName || originalCategoryID != selectedCategory?.id {
                 pendingMerchantLearning = MerchantLearningPrompt(
@@ -316,27 +330,49 @@ struct TransactionEditorView: View {
             category: selectedCategory
         )
         modelContext.insert(transaction)
-        updateRecurringPayment(for: transaction, category: selectedCategory, frequency: draft.recurrenceFrequency)
+        updateRecurringPayment(
+            for: transaction,
+            category: selectedCategory,
+            frequency: draft.recurrenceFrequency,
+            customIntervalDays: draft.customIntervalDays
+        )
     }
 
-    private func updateRecurringPayment(for transaction: Transaction, category: Category?, frequency: RecurrenceFrequency) {
+    private func updateRecurringPayment(
+        for transaction: Transaction,
+        category: Category?,
+        frequency: RecurrenceFrequency,
+        customIntervalDays: Int
+    ) {
         guard transaction.isRecurring else {
             transaction.recurringPayment = nil
             return
         }
 
         let recurringPayment = transaction.recurringPayment ?? RecurringPayment(
+            accountName: transaction.accountName,
             merchantName: transaction.merchantName,
             expectedAmount: transaction.amount,
             frequency: frequency,
-            nextExpectedDate: nextExpectedDate(after: transaction.transactionDate, frequency: frequency),
+            customIntervalDays: customIntervalDays,
+            nextExpectedDate: recurringSuggestionService.nextExpectedDate(
+                after: transaction.transactionDate,
+                frequency: frequency,
+                customIntervalDays: customIntervalDays
+            ),
             category: category
         )
 
+        recurringPayment.accountName = transaction.accountName
         recurringPayment.merchantName = transaction.merchantName
         recurringPayment.expectedAmount = transaction.amount
         recurringPayment.frequency = frequency
-        recurringPayment.nextExpectedDate = nextExpectedDate(after: transaction.transactionDate, frequency: frequency)
+        recurringPayment.customIntervalDays = customIntervalDays
+        recurringPayment.nextExpectedDate = recurringSuggestionService.nextExpectedDate(
+            after: transaction.transactionDate,
+            frequency: frequency,
+            customIntervalDays: customIntervalDays
+        )
         recurringPayment.category = category
         recurringPayment.updatedAt = .now
 
@@ -359,18 +395,6 @@ struct TransactionEditorView: View {
         dismiss()
     }
 
-    private func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency) -> Date? {
-        switch frequency {
-        case .none:
-            nil
-        case .weekly:
-            Calendar.current.date(byAdding: .weekOfYear, value: 1, to: date)
-        case .monthly:
-            Calendar.current.date(byAdding: .month, value: 1, to: date)
-        case .yearly:
-            Calendar.current.date(byAdding: .year, value: 1, to: date)
-        }
-    }
 }
 
 private struct ManualTransactionDraft {
@@ -385,6 +409,7 @@ private struct ManualTransactionDraft {
     let excludedReason: String
     let isRecurring: Bool
     let recurrenceFrequency: RecurrenceFrequency
+    let customIntervalDays: Int
     let note: String
 }
 

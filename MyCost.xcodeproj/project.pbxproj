@@ -31,6 +31,8 @@
 		000000000000000000000116 /* TransactionCandidateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* TransactionCandidateParser.swift */; };
 		000000000000000000000117 /* OCRTransactionReviewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000018 /* OCRTransactionReviewStore.swift */; };
 		000000000000000000000118 /* MerchantRulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* MerchantRulesView.swift */; };
+		000000000000000000000119 /* RecurringPaymentSuggestionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001A /* RecurringPaymentSuggestionService.swift */; };
+		00000000000000000000011A /* RecurringPaymentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001B /* RecurringPaymentsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +61,8 @@
 		000000000000000000000017 /* TransactionCandidateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionCandidateParser.swift; sourceTree = "<group>"; };
 		000000000000000000000018 /* OCRTransactionReviewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTransactionReviewStore.swift; sourceTree = "<group>"; };
 		000000000000000000000019 /* MerchantRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRulesView.swift; sourceTree = "<group>"; };
+		00000000000000000000001A /* RecurringPaymentSuggestionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentSuggestionService.swift; sourceTree = "<group>"; };
+		00000000000000000000001B /* RecurringPaymentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +119,7 @@
 				000000000000000000000018 /* OCRTransactionReviewStore.swift */,
 				000000000000000000000009 /* MerchantRuleService.swift */,
 				00000000000000000000000A /* SpendingAnalytics.swift */,
+				00000000000000000000001A /* RecurringPaymentSuggestionService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -127,6 +132,7 @@
 				000000000000000000000308 /* Import */,
 				000000000000000000000309 /* Review */,
 				00000000000000000000030E /* Rules */,
+				00000000000000000000030F /* Recurring */,
 				00000000000000000000030A /* History */,
 				00000000000000000000030B /* Details */,
 				00000000000000000000030C /* Components */,
@@ -189,6 +195,12 @@
 			isa = PBXGroup;
 			children = (000000000000000000000019 /* MerchantRulesView.swift */);
 			path = Rules;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030F /* Recurring */ = {
+			isa = PBXGroup;
+			children = (00000000000000000000001B /* RecurringPaymentsView.swift */);
+			path = Recurring;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -259,11 +271,13 @@
 				000000000000000000000117 /* OCRTransactionReviewStore.swift in Sources */,
 				000000000000000000000109 /* MerchantRuleService.swift in Sources */,
 				00000000000000000000010A /* SpendingAnalytics.swift in Sources */,
+				000000000000000000000119 /* RecurringPaymentSuggestionService.swift in Sources */,
 				00000000000000000000010B /* RootTabView.swift in Sources */,
 				00000000000000000000010C /* DashboardView.swift in Sources */,
 				00000000000000000000010D /* ImportView.swift in Sources */,
 				00000000000000000000010E /* ReviewTransactionsView.swift in Sources */,
 				000000000000000000000118 /* MerchantRulesView.swift in Sources */,
+				00000000000000000000011A /* RecurringPaymentsView.swift in Sources */,
 				00000000000000000000010F /* TransactionHistoryView.swift in Sources */,
 				000000000000000000000110 /* TransactionDetailView.swift in Sources */,
 				000000000000000000000111 /* TransactionEditorView.swift in Sources */,

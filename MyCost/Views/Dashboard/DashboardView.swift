@@ -3,10 +3,11 @@ import SwiftUI
 
 struct DashboardView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
+    @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
 
     private let analytics = SpendingAnalytics()
     private var summary: MonthlySpendingSummary {
-        analytics.monthlySummary(for: .now, transactions: transactions)
+        analytics.monthlySummary(for: .now, transactions: transactions, recurringPayments: recurringPayments)
     }
 
     var body: some View {
@@ -32,6 +33,25 @@ struct DashboardView: View {
                     .accessibilityIdentifier("dashboard.postedTotal")
                 MetricRow(title: "Pending", value: Formatters.currencyString(for: summary.pendingTotal), systemImage: "clock")
                     .accessibilityIdentifier("dashboard.pendingTotal")
+            }
+
+            Section("Recurring") {
+                MetricRow(
+                    title: "Expected Monthly",
+                    value: Formatters.currencyString(for: summary.expectedMonthlyRecurringTotal),
+                    systemImage: "calendar.badge.clock"
+                )
+                .accessibilityIdentifier("dashboard.expectedRecurring")
+                MetricRow(
+                    title: "Recurring This Month",
+                    value: Formatters.currencyString(for: summary.recurringTotal),
+                    systemImage: "repeat"
+                )
+                MetricRow(
+                    title: "Non-Recurring This Month",
+                    value: Formatters.currencyString(for: summary.nonRecurringTotal),
+                    systemImage: "cart"
+                )
             }
 
             Section("Categories") {

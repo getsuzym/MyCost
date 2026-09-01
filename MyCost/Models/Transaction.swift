@@ -26,8 +26,11 @@ enum TransactionReviewState: String, Codable, CaseIterable, Identifiable {
 enum RecurrenceFrequency: String, Codable, CaseIterable, Identifiable {
     case none
     case weekly
+    case biweekly
     case monthly
+    case quarterly
     case yearly
+    case custom
 
     var id: String { rawValue }
 
@@ -35,8 +38,11 @@ enum RecurrenceFrequency: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .none: "None"
         case .weekly: "Weekly"
+        case .biweekly: "Biweekly"
         case .monthly: "Monthly"
+        case .quarterly: "Quarterly"
         case .yearly: "Yearly"
+        case .custom: "Custom"
         }
     }
 }

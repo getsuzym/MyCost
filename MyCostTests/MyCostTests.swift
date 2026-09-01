@@ -451,6 +451,108 @@ final class MyCostTests: XCTestCase {
         XCTAssertNil(match)
     }
 
+    func testRecurringSuggestionDetectsFixedPriceMonthlySubscription() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = [
+            recurringCandidate("Cloud Storage", amount: 9.99, date: date(2026, 1, 5)),
+            recurringCandidate("Cloud Storage", amount: 9.99, date: date(2026, 2, 5)),
+            recurringCandidate("Cloud Storage", amount: 9.99, date: date(2026, 3, 5)),
+            recurringCandidate("Cloud Storage", amount: 9.99, date: date(2026, 4, 5))
+        ]
+
+        let suggestion = service.suggestions(from: transactions).first
+
+        XCTAssertEqual(suggestion?.merchantName, "Cloud Storage")
+        XCTAssertEqual(suggestion?.frequency, .monthly)
+        XCTAssertEqual(suggestion?.expectedAmount, 9.99)
+    }
+
+    func testRecurringSuggestionDetectsVariableUtilityBills() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = [
+            recurringCandidate("City Power", amount: 84.20, date: date(2026, 1, 12)),
+            recurringCandidate("City Power", amount: 91.75, date: date(2026, 2, 12)),
+            recurringCandidate("City Power", amount: 79.10, date: date(2026, 3, 13)),
+            recurringCandidate("City Power", amount: 88.00, date: date(2026, 4, 12))
+        ]
+
+        let suggestion = service.suggestions(from: transactions).first
+
+        XCTAssertEqual(suggestion?.merchantName, "City Power")
+        XCTAssertEqual(suggestion?.frequency, .monthly)
+    }
+
+    func testRecurringSuggestionDetectsAnnualPayments() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = [
+            recurringCandidate("Domain Registrar", amount: 19.99, date: date(2025, 8, 20)),
+            recurringCandidate("Domain Registrar", amount: 19.99, date: date(2026, 8, 20))
+        ]
+
+        let suggestion = service.suggestions(from: transactions).first
+
+        XCTAssertEqual(suggestion?.frequency, .yearly)
+        XCTAssertEqual(suggestion?.expectedAmount, 19.99)
+    }
+
+    func testRecurringSuggestionAllowsMissedMonths() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = [
+            recurringCandidate("Music Service", amount: 12.99, date: date(2026, 1, 2)),
+            recurringCandidate("Music Service", amount: 12.99, date: date(2026, 2, 2)),
+            recurringCandidate("Music Service", amount: 12.99, date: date(2026, 4, 2)),
+            recurringCandidate("Music Service", amount: 12.99, date: date(2026, 5, 2))
+        ]
+
+        let suggestion = service.suggestions(from: transactions).first
+
+        XCTAssertEqual(suggestion?.frequency, .monthly)
+    }
+
+    func testRecurringSuggestionIgnoresFrequentNonRecurringMerchant() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = [
+            recurringCandidate("Coffee Bar", amount: 4.50, date: date(2026, 1, 1)),
+            recurringCandidate("Coffee Bar", amount: 8.90, date: date(2026, 1, 8)),
+            recurringCandidate("Coffee Bar", amount: 3.25, date: date(2026, 1, 15)),
+            recurringCandidate("Coffee Bar", amount: 10.40, date: date(2026, 1, 22)),
+            recurringCandidate("Coffee Bar", amount: 5.75, date: date(2026, 1, 29)),
+            recurringCandidate("Coffee Bar", amount: 12.20, date: date(2026, 2, 5))
+        ]
+
+        XCTAssertTrue(service.suggestions(from: transactions).isEmpty)
+    }
+
+    func testSpendingSummaryDistinguishesRecurringAndNonRecurringSpending() {
+        let recurringPayment = RecurringPayment(
+            merchantName: "Cloud Storage",
+            expectedAmount: 12,
+            frequency: .monthly
+        )
+        let recurring = Transaction(
+            merchantName: "Cloud Storage",
+            amount: 12,
+            transactionDate: date(2026, 8, 1),
+            isRecurring: true,
+            recurringPayment: recurringPayment
+        )
+        let nonRecurring = Transaction(
+            merchantName: "Cafe",
+            amount: 8,
+            transactionDate: date(2026, 8, 2)
+        )
+
+        let summary = SpendingAnalytics().monthlySummary(
+            for: date(2026, 8, 15),
+            transactions: [recurring, nonRecurring],
+            recurringPayments: [recurringPayment]
+        )
+
+        XCTAssertEqual(summary.recurringTotal, 12)
+        XCTAssertEqual(summary.nonRecurringTotal, 8)
+        XCTAssertEqual(summary.expectedMonthlyRecurringTotal, 12)
+    }
+
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }
@@ -472,6 +574,16 @@ final class MyCostTests: XCTestCase {
             transactionDate: transactionDate,
             postedDate: postedDate,
             status: status
+        )
+    }
+
+    private func recurringCandidate(_ merchantName: String, amount: Decimal, date: Date) -> Transaction {
+        Transaction(
+            merchantName: merchantName,
+            originalDescription: merchantName,
+            amount: amount,
+            transactionDate: date,
+            status: .posted
         )
     }
 }

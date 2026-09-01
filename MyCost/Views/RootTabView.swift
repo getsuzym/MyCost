@@ -39,6 +39,13 @@ struct RootTabView: View {
             }
 
             NavigationStack {
+                RecurringPaymentsView()
+            }
+            .tabItem {
+                Label("Recurring", systemImage: "repeat")
+            }
+
+            NavigationStack {
                 TransactionHistoryView()
             }
             .tabItem {
