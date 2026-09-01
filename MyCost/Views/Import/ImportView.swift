@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ImportView: View {
+    @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
+
     @State private var isShowingImagePicker = false
     @State private var selectedImage: UIImage?
     @State private var recognizedTextBlocks: [RecognizedTextBlock] = []
@@ -90,12 +92,14 @@ struct ImportView: View {
                 let result = try await importService.processScreenshot(image)
                 await MainActor.run {
                     recognizedTextBlocks = result.recognizedTextBlocks
+                    ocrReviewStore.replaceCandidates(result.transactionCandidates)
                     statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks and detected \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
                     isProcessing = false
                 }
             } catch {
                 await MainActor.run {
                     recognizedTextBlocks = []
+                    ocrReviewStore.clear()
                     errorMessage = error.localizedDescription
                     statusMessage = "Screenshot processed with errors."
                     isProcessing = false

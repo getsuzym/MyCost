@@ -11,9 +11,11 @@ struct TransactionEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
 
     let mode: TransactionEditorMode
 
+    @State private var accountName = "Default"
     @State private var merchantName = ""
     @State private var amountText = ""
     @State private var transactionDate = Date()
@@ -25,6 +27,10 @@ struct TransactionEditorView: View {
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
     @State private var note = ""
     @State private var validationMessage: String?
+    @State private var pendingManualDraft: ManualTransactionDraft?
+    @State private var pendingDuplicateTransactionID: UUID?
+
+    private let duplicateMatchingService = DuplicateMatchingService()
 
     private var title: String {
         switch mode {
@@ -36,6 +42,10 @@ struct TransactionEditorView: View {
     var body: some View {
         Form {
             Section("Transaction") {
+                TextField("Account", text: $accountName)
+                    .textInputAutocapitalization(.words)
+                    .accessibilityIdentifier("transactionEditor.account")
+
                 TextField("Merchant", text: $merchantName)
                     .textInputAutocapitalization(.words)
                     .accessibilityIdentifier("transactionEditor.merchant")
@@ -96,6 +106,30 @@ struct TransactionEditorView: View {
             }
         }
         .navigationTitle(title)
+        .confirmationDialog(
+            "Possible duplicate transaction",
+            isPresented: Binding(
+                get: { pendingManualDraft != nil },
+                set: { if !$0 { pendingManualDraft = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Merge") {
+                savePendingManualDraft(decision: .merge)
+            }
+            Button("Keep Both") {
+                savePendingManualDraft(decision: .keepBoth)
+            }
+            Button("Review") {
+                savePendingManualDraft(decision: .review)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingManualDraft = nil
+                pendingDuplicateTransactionID = nil
+            }
+        } message: {
+            Text("A similar transaction already exists. Choose how to handle this one.")
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") {
@@ -114,6 +148,7 @@ struct TransactionEditorView: View {
     private func loadInitialValues() {
         guard case .edit(let transaction) = mode else { return }
 
+        accountName = transaction.accountName
         merchantName = transaction.merchantName
         amountText = NSDecimalNumber(decimal: transaction.amount).stringValue
         transactionDate = transaction.transactionDate
@@ -128,6 +163,7 @@ struct TransactionEditorView: View {
 
     private func save() {
         let trimmedMerchantName = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAccountName = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMerchantName.isEmpty else {
             validationMessage = "Enter a merchant name."
             return
@@ -142,22 +178,45 @@ struct TransactionEditorView: View {
 
         switch mode {
         case .add:
-            let transaction = Transaction(
+            let draft = ManualTransactionDraft(
+                accountName: trimmedAccountName.isEmpty ? "Default" : trimmedAccountName,
                 merchantName: trimmedMerchantName,
                 amount: amount,
                 transactionDate: transactionDate,
                 status: status,
+                selectedCategoryID: selectedCategoryID,
                 isExcluded: isExcluded,
-                excludedReason: excludedReason,
+                excludedReason: isExcluded ? excludedReason : "",
                 isRecurring: isRecurring,
-                note: note,
-                category: selectedCategory
+                recurrenceFrequency: recurrenceFrequency,
+                note: note
             )
-            modelContext.insert(transaction)
-            updateRecurringPayment(for: transaction, category: selectedCategory)
+            let incoming = DuplicateTransactionSnapshot(
+                accountName: draft.accountName,
+                merchantName: draft.merchantName,
+                amount: draft.amount,
+                transactionDate: draft.transactionDate,
+                status: draft.status
+            )
+            let existingSnapshots = transactions.map(DuplicateTransactionSnapshot.init(transaction:))
+
+            if duplicateMatchingService.highConfidenceDuplicate(for: incoming, against: existingSnapshots) != nil {
+                validationMessage = "This transaction already exists."
+                return
+            }
+
+            if let mediumMatch = duplicateMatchingService.bestMatch(for: incoming, against: existingSnapshots),
+               mediumMatch.confidence == .medium {
+                pendingManualDraft = draft
+                pendingDuplicateTransactionID = mediumMatch.existing.id
+                return
+            }
+
+            insertManualDraft(draft, duplicateState: .unique)
 
         case .edit(let transaction):
             let originalMerchantName = transaction.merchantName
+            transaction.accountName = trimmedAccountName.isEmpty ? "Default" : trimmedAccountName
             transaction.merchantName = trimmedMerchantName
             transaction.amount = amount
             transaction.transactionDate = transactionDate
@@ -168,7 +227,7 @@ struct TransactionEditorView: View {
             transaction.isRecurring = isRecurring
             transaction.note = note
             transaction.updatedAt = .now
-            updateRecurringPayment(for: transaction, category: selectedCategory)
+            updateRecurringPayment(for: transaction, category: selectedCategory, frequency: recurrenceFrequency)
 
             if originalMerchantName != trimmedMerchantName {
                 createMerchantRuleIfRenamed(from: originalMerchantName, to: trimmedMerchantName, category: selectedCategory)
@@ -179,8 +238,53 @@ struct TransactionEditorView: View {
         dismiss()
     }
 
-    private func updateRecurringPayment(for transaction: Transaction, category: Category?) {
-        guard isRecurring else {
+    private func savePendingManualDraft(decision: DuplicateReviewDecision) {
+        guard let pendingManualDraft else { return }
+
+        if decision == .merge, let pendingDuplicateTransactionID,
+           let transaction = transactions.first(where: { $0.id == pendingDuplicateTransactionID }) {
+            transaction.accountName = pendingManualDraft.accountName
+            transaction.merchantName = pendingManualDraft.merchantName
+            transaction.amount = pendingManualDraft.amount
+            transaction.transactionDate = pendingManualDraft.transactionDate
+            transaction.status = pendingManualDraft.status
+            transaction.category = categories.first { $0.id == pendingManualDraft.selectedCategoryID }
+            transaction.duplicateState = .unique
+            transaction.updatedAt = .now
+            try? modelContext.save()
+            dismiss()
+            return
+        }
+
+        insertManualDraft(
+            pendingManualDraft,
+            duplicateState: decision == .review ? .possibleDuplicate : .unique
+        )
+        try? modelContext.save()
+        dismiss()
+    }
+
+    private func insertManualDraft(_ draft: ManualTransactionDraft, duplicateState: DuplicateState) {
+        let selectedCategory = categories.first { $0.id == draft.selectedCategoryID }
+        let transaction = Transaction(
+            accountName: draft.accountName,
+            merchantName: draft.merchantName,
+            amount: draft.amount,
+            transactionDate: draft.transactionDate,
+            status: draft.status,
+            isExcluded: draft.isExcluded,
+            excludedReason: draft.excludedReason,
+            isRecurring: draft.isRecurring,
+            duplicateState: duplicateState,
+            note: draft.note,
+            category: selectedCategory
+        )
+        modelContext.insert(transaction)
+        updateRecurringPayment(for: transaction, category: selectedCategory, frequency: draft.recurrenceFrequency)
+    }
+
+    private func updateRecurringPayment(for transaction: Transaction, category: Category?, frequency: RecurrenceFrequency) {
+        guard transaction.isRecurring else {
             transaction.recurringPayment = nil
             return
         }
@@ -188,15 +292,15 @@ struct TransactionEditorView: View {
         let recurringPayment = transaction.recurringPayment ?? RecurringPayment(
             merchantName: transaction.merchantName,
             expectedAmount: transaction.amount,
-            frequency: recurrenceFrequency,
-            nextExpectedDate: nextExpectedDate(after: transaction.transactionDate, frequency: recurrenceFrequency),
+            frequency: frequency,
+            nextExpectedDate: nextExpectedDate(after: transaction.transactionDate, frequency: frequency),
             category: category
         )
 
         recurringPayment.merchantName = transaction.merchantName
         recurringPayment.expectedAmount = transaction.amount
-        recurringPayment.frequency = recurrenceFrequency
-        recurringPayment.nextExpectedDate = nextExpectedDate(after: transaction.transactionDate, frequency: recurrenceFrequency)
+        recurringPayment.frequency = frequency
+        recurringPayment.nextExpectedDate = nextExpectedDate(after: transaction.transactionDate, frequency: frequency)
         recurringPayment.category = category
         recurringPayment.updatedAt = .now
 
@@ -223,4 +327,18 @@ struct TransactionEditorView: View {
             Calendar.current.date(byAdding: .year, value: 1, to: date)
         }
     }
+}
+
+private struct ManualTransactionDraft {
+    let accountName: String
+    let merchantName: String
+    let amount: Decimal
+    let transactionDate: Date
+    let status: TransactionStatus
+    let selectedCategoryID: UUID?
+    let isExcluded: Bool
+    let excludedReason: String
+    let isRecurring: Bool
+    let recurrenceFrequency: RecurrenceFrequency
+    let note: String
 }

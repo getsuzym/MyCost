@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
+    @StateObject private var ocrReviewStore = OCRTransactionReviewStore()
 
     var body: some View {
         TabView {
@@ -17,6 +18,7 @@ struct RootTabView: View {
             NavigationStack {
                 ImportView()
             }
+            .environmentObject(ocrReviewStore)
             .tabItem {
                 Label("Import", systemImage: "square.and.arrow.down")
             }
@@ -24,6 +26,7 @@ struct RootTabView: View {
             NavigationStack {
                 ReviewTransactionsView()
             }
+            .environmentObject(ocrReviewStore)
             .tabItem {
                 Label("Review", systemImage: "checklist")
             }

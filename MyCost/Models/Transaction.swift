@@ -60,7 +60,9 @@ enum DuplicateState: String, Codable, CaseIterable, Identifiable {
 @Model
 final class Transaction {
     @Attribute(.unique) var id: UUID
+    var accountName: String
     var merchantName: String
+    var originalDescription: String
     var amount: Decimal
     var transactionDate: Date
     var postedDate: Date?
@@ -78,7 +80,9 @@ final class Transaction {
 
     init(
         id: UUID = UUID(),
+        accountName: String = "Default",
         merchantName: String,
+        originalDescription: String = "",
         amount: Decimal,
         transactionDate: Date,
         postedDate: Date? = nil,
@@ -94,7 +98,9 @@ final class Transaction {
         updatedAt: Date = .now
     ) {
         self.id = id
+        self.accountName = accountName
         self.merchantName = merchantName
+        self.originalDescription = originalDescription
         self.amount = amount
         self.transactionDate = transactionDate
         self.postedDate = postedDate

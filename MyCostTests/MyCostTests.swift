@@ -274,7 +274,181 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(candidates[0].status, .posted)
     }
 
+    func testOCRTransactionDraftMapsCandidateForReview() {
+        let candidate = TransactionCandidate(
+            detectedDate: date(2026, 8, 24),
+            rawMerchantDescription: "Corner Market",
+            amount: 21.45,
+            status: .pending,
+            originalOCRText: "08/24 Corner Market $21.45 Pending",
+            sourceText: "08/24 Corner Market $21.45 Pending",
+            confidence: TransactionCandidateFieldConfidences(date: 0.75, merchantDescription: 0.8, amount: 0.95, status: 0.95),
+            validationFlags: [.inferredYear, .ambiguousDate]
+        )
+
+        let draft = OCRTransactionDraft(candidate: candidate, referenceDate: date(2026, 8, 31))
+
+        XCTAssertEqual(draft.transactionDate, date(2026, 8, 24))
+        XCTAssertEqual(draft.merchantName, "Corner Market")
+        XCTAssertEqual(draft.amountText, "21.45")
+        XCTAssertEqual(draft.status, .pending)
+        XCTAssertTrue(draft.isSelected)
+        XCTAssertTrue(draft.canImport)
+        XCTAssertTrue(draft.isUncertain(.date))
+        XCTAssertFalse(draft.isUncertain(.amount))
+    }
+
+    func testOCRTransactionDraftRequiresMerchantAndAmountToImport() {
+        let candidate = TransactionCandidate(
+            detectedDate: nil,
+            rawMerchantDescription: "",
+            amount: nil,
+            status: nil,
+            originalOCRText: "Pending",
+            sourceText: "Pending",
+            confidence: .empty,
+            validationFlags: [.missingDate, .missingMerchantDescription, .missingAmount, .missingStatus]
+        )
+
+        let draft = OCRTransactionDraft(candidate: candidate, referenceDate: date(2026, 8, 31))
+
+        XCTAssertFalse(draft.canImport)
+        XCTAssertTrue(draft.isUncertain(.merchant))
+        XCTAssertTrue(draft.isUncertain(.amount))
+        XCTAssertTrue(draft.isUncertain(.status))
+    }
+
+    func testDuplicateMatcherDetectsRepeatedScreenshotImportAsHighConfidence() {
+        let service = DuplicateMatchingService()
+        let existing = snapshot(
+            merchantName: "STARBUCKS STORE",
+            originalDescription: "08/28/2026 STARBUCKS STORE $5.48 Pending",
+            amount: 5.48,
+            transactionDate: date(2026, 8, 28),
+            status: .pending
+        )
+        let incoming = snapshot(
+            merchantName: "STARBUCKS STORE",
+            originalDescription: "08/28/2026 STARBUCKS STORE $5.48 Pending",
+            amount: 5.48,
+            transactionDate: date(2026, 8, 28),
+            status: .pending
+        )
+
+        let match = service.bestMatch(for: incoming, against: [existing])
+
+        XCTAssertEqual(match?.confidence, .high)
+        XCTAssertTrue(match?.reasons.contains(.exactOriginalDescription) == true)
+    }
+
+    func testDuplicateMatcherTreatsPendingToPostedAsMediumConfidence() {
+        let service = DuplicateMatchingService()
+        let pending = snapshot(
+            merchantName: "Corner Market",
+            amount: 21.45,
+            transactionDate: date(2026, 8, 24),
+            status: .pending
+        )
+        let posted = snapshot(
+            merchantName: "Corner Market",
+            amount: 21.45,
+            transactionDate: date(2026, 8, 26),
+            postedDate: date(2026, 8, 26),
+            status: .posted
+        )
+
+        let match = service.bestMatch(for: posted, against: [pending])
+
+        XCTAssertEqual(match?.confidence, .medium)
+        XCTAssertTrue(match?.reasons.contains(.pendingToPostedDateWindow) == true)
+    }
+
+    func testDuplicateMatcherTreatsSimilarMerchantsSameAmountAsMediumConfidence() {
+        let service = DuplicateMatchingService()
+        let existing = snapshot(
+            merchantName: "SQ Coffee Bar",
+            amount: 6.25,
+            transactionDate: date(2026, 8, 20),
+            status: .posted
+        )
+        let incoming = snapshot(
+            merchantName: "Square Coffee Bar LLC",
+            amount: 6.25,
+            transactionDate: date(2026, 8, 20),
+            status: .posted
+        )
+
+        let match = service.bestMatch(for: incoming, against: [existing])
+
+        XCTAssertEqual(match?.confidence, .medium)
+        XCTAssertTrue(match?.reasons.contains(.similarMerchant) == true)
+    }
+
+    func testDuplicateMatcherDoesNotAutoPreventLegitimateSameDayPurchasesWithSameAmount() {
+        let service = DuplicateMatchingService()
+        let first = snapshot(
+            merchantName: "City Transit",
+            originalDescription: "08/18 City Transit Trip 1032 $2.90",
+            amount: 2.90,
+            transactionDate: date(2026, 8, 18),
+            status: .posted
+        )
+        let second = snapshot(
+            merchantName: "City Transit",
+            originalDescription: "08/18 City Transit Trip 2044 $2.90",
+            amount: 2.90,
+            transactionDate: date(2026, 8, 18),
+            status: .posted
+        )
+
+        let match = service.bestMatch(for: second, against: [first])
+
+        XCTAssertNotEqual(match?.confidence, .high)
+    }
+
+    func testDuplicateMatcherIgnoresTransactionsAcrossDifferentAccounts() {
+        let service = DuplicateMatchingService()
+        let checking = snapshot(
+            accountName: "Checking",
+            merchantName: "Target",
+            amount: 42.10,
+            transactionDate: date(2026, 8, 27),
+            status: .posted
+        )
+        let creditCard = snapshot(
+            accountName: "Credit Card",
+            merchantName: "Target",
+            amount: 42.10,
+            transactionDate: date(2026, 8, 27),
+            status: .posted
+        )
+
+        let match = service.bestMatch(for: creditCard, against: [checking])
+
+        XCTAssertNil(match)
+    }
+
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
+    }
+
+    private func snapshot(
+        accountName: String = "Default",
+        merchantName: String,
+        originalDescription: String = "",
+        amount: Decimal,
+        transactionDate: Date,
+        postedDate: Date? = nil,
+        status: TransactionStatus
+    ) -> DuplicateTransactionSnapshot {
+        DuplicateTransactionSnapshot(
+            accountName: accountName,
+            merchantName: merchantName,
+            originalDescription: originalDescription,
+            amount: amount,
+            transactionDate: transactionDate,
+            postedDate: postedDate,
+            status: status
+        )
     }
 }
