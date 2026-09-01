@@ -28,6 +28,7 @@
 		000000000000000000000113 /* TransactionRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013 /* TransactionRowView.swift */; };
 		000000000000000000000114 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000015 /* VisionOCRService.swift */; };
 		000000000000000000000115 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000016 /* ImagePicker.swift */; };
+		000000000000000000000116 /* TransactionCandidateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* TransactionCandidateParser.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +54,7 @@
 		000000000000000000000014 /* MyCost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyCost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000015 /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
 		000000000000000000000016 /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
+		000000000000000000000017 /* TransactionCandidateParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionCandidateParser.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 				000000000000000000000007 /* DuplicateDetector.swift */,
 				000000000000000000000008 /* ScreenshotImportService.swift */,
 				000000000000000000000015 /* VisionOCRService.swift */,
+				000000000000000000000017 /* TransactionCandidateParser.swift */,
 				000000000000000000000009 /* MerchantRuleService.swift */,
 				00000000000000000000000A /* SpendingAnalytics.swift */,
 			);
@@ -240,6 +243,7 @@
 				000000000000000000000107 /* DuplicateDetector.swift in Sources */,
 				000000000000000000000108 /* ScreenshotImportService.swift in Sources */,
 				000000000000000000000114 /* VisionOCRService.swift in Sources */,
+				000000000000000000000116 /* TransactionCandidateParser.swift in Sources */,
 				000000000000000000000109 /* MerchantRuleService.swift in Sources */,
 				00000000000000000000010A /* SpendingAnalytics.swift in Sources */,
 				00000000000000000000010B /* RootTabView.swift in Sources */,

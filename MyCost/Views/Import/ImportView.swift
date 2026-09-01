@@ -90,7 +90,7 @@ struct ImportView: View {
                 let result = try await importService.processScreenshot(image)
                 await MainActor.run {
                     recognizedTextBlocks = result.recognizedTextBlocks
-                    statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks. Transactions were not saved."
+                    statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks and detected \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
                     isProcessing = false
                 }
             } catch {

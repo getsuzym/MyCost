@@ -12,6 +12,7 @@ struct ExtractedTransaction: Identifiable {
 struct ScreenshotImportResult {
     let imageSize: CGSize
     let recognizedTextBlocks: [RecognizedTextBlock]
+    let transactionCandidates: [TransactionCandidate]
 }
 
 enum ScreenshotImportError: LocalizedError, Equatable {
@@ -30,9 +31,14 @@ enum ScreenshotImportError: LocalizedError, Equatable {
 
 struct ScreenshotImportService {
     private let ocrService: OCRServicing
+    private let transactionParser: TransactionCandidateParser
 
-    init(ocrService: OCRServicing = VisionOCRService()) {
+    init(
+        ocrService: OCRServicing = VisionOCRService(),
+        transactionParser: TransactionCandidateParser = TransactionCandidateParser()
+    ) {
         self.ocrService = ocrService
+        self.transactionParser = transactionParser
     }
 
     func processScreenshot(_ image: UIImage) async throws -> ScreenshotImportResult {
@@ -41,10 +47,12 @@ struct ScreenshotImportService {
             guard !textBlocks.isEmpty else {
                 throw ScreenshotImportError.noRecognizedText
             }
+            let transactionCandidates = transactionParser.parse(lines: textBlocks.map(\.text))
 
             return ScreenshotImportResult(
                 imageSize: image.size,
-                recognizedTextBlocks: textBlocks
+                recognizedTextBlocks: textBlocks,
+                transactionCandidates: transactionCandidates
             )
         } catch let error as ScreenshotImportError {
             throw error

@@ -189,8 +189,92 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(unrelated.merchantName, "Book Shop")
     }
 
+    func testTransactionCandidateParserParsesMultipleSingleLineTransactions() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        let ocrText = """
+        Recent Activity
+        08/28/2026 STARBUCKS STORE $5.48 Pending
+        08/27/2026 TARGET T-123 $42.10 Posted
+        Available Balance $1,234.56
+        """
+
+        let candidates = parser.parse(ocrText: ocrText)
+
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 28))
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "STARBUCKS STORE")
+        XCTAssertEqual(candidates[0].amount, 5.48)
+        XCTAssertEqual(candidates[0].status, .pending)
+        XCTAssertEqual(candidates[0].originalOCRText, ocrText)
+        XCTAssertEqual(candidates[1].detectedDate, date(2026, 8, 27))
+        XCTAssertEqual(candidates[1].rawMerchantDescription, "TARGET T-123")
+        XCTAssertEqual(candidates[1].amount, 42.10)
+        XCTAssertEqual(candidates[1].status, .posted)
+    }
+
+    func testTransactionCandidateParserParsesMultilineTransactionOCR() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        let candidates = parser.parse(lines: [
+            "Aug 26",
+            "Trader Joe's",
+            "$64.22",
+            "Pending"
+        ])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 26))
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "Trader Joe's")
+        XCTAssertEqual(candidates[0].amount, 64.22)
+        XCTAssertEqual(candidates[0].status, .pending)
+        XCTAssertEqual(candidates[0].sourceText, "Aug 26\nTrader Joe's\n$64.22\nPending")
+        XCTAssertTrue(candidates[0].validationFlags.contains(.inferredYear))
+    }
+
+    func testTransactionCandidateParserFlagsMissingStatusAndAmbiguousDate() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+
+        let candidates = parser.parse(ocrText: "8/25 Corner Market $21.45")
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 25))
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "Corner Market")
+        XCTAssertEqual(candidates[0].amount, 21.45)
+        XCTAssertNil(candidates[0].status)
+        XCTAssertTrue(candidates[0].validationFlags.contains(.missingStatus))
+        XCTAssertTrue(candidates[0].validationFlags.contains(.ambiguousDate))
+        XCTAssertTrue(candidates[0].validationFlags.contains(.inferredYear))
+    }
+
+    func testTransactionCandidateParserKeepsMalformedDateOnlyCandidateForReview() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+
+        let candidates = parser.parse(lines: [
+            "08/29/2026",
+            "Mystery Merchant",
+            "Pending"
+        ])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "Mystery Merchant")
+        XCTAssertNil(candidates[0].amount)
+        XCTAssertEqual(candidates[0].status, .pending)
+        XCTAssertTrue(candidates[0].validationFlags.contains(.missingAmount))
+    }
+
+    func testTransactionCandidateParserHandlesRefundsAsNegativeAmounts() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+
+        let candidates = parser.parse(ocrText: "2026-08-24 ONLINE STORE REFUND $12.99 Posted")
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 24))
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "ONLINE STORE REFUND")
+        XCTAssertEqual(candidates[0].amount, -12.99)
+        XCTAssertEqual(candidates[0].status, .posted)
+    }
+
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }
 }
-
