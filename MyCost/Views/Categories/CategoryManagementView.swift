@@ -111,6 +111,7 @@ struct CategoryManagementView: View {
     }
 
     private func performDeletion(of category: Category, reassigningTo target: Category?) {
+        let counts = counts(for: category)
         do {
             try service.deleteCategory(
                 category,
@@ -121,15 +122,24 @@ struct CategoryManagementView: View {
                 modelContext: modelContext
             )
             deletionTarget = nil
+            if counts.isInUse {
+                let destination = target.map { "moved to \($0.name)" } ?? "moved to Uncategorized"
+                ToastCenter.shared.success("Category deleted — \(counts.total) item\(counts.total == 1 ? "" : "s") \(destination)")
+            } else {
+                ToastCenter.shared.success(CRUDFeedback.deleted("category"))
+            }
         } catch {
             errorMessage = error.localizedDescription
+            ToastCenter.shared.error(CRUDFeedback.deleteFailure("category"))
         }
     }
 
     private func toggleActive(_ category: Category) {
         errorMessage = nil
+        let willHide = category.isActive
         do {
             try service.setActive(category, !category.isActive, modelContext: modelContext)
+            ToastCenter.shared.success(willHide ? "Category hidden" : "Category shown")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -326,6 +336,7 @@ private struct CategoryEditorView: View {
 
     private func save() {
         errorMessage = nil
+        let isEditing = category != nil
         do {
             if let category {
                 try service.updateCategory(
@@ -345,9 +356,13 @@ private struct CategoryEditorView: View {
                     modelContext: modelContext
                 )
             }
+            ToastCenter.shared.success(isEditing ? CRUDFeedback.updated("category") : CRUDFeedback.added("category"))
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+            if (error as? CategoryError) == nil {
+                ToastCenter.shared.error(CRUDFeedback.saveFailure("category"))
+            }
         }
     }
 }

@@ -61,6 +61,7 @@ struct RootTabView: View {
             }
             .accessibilityIdentifier("tab.history")
         }
+        .toastHost()
         .task {
             SeedDataService.seedDefaultCategoriesIfNeeded(modelContext: modelContext)
         }

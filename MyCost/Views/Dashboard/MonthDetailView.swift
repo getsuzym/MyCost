@@ -107,7 +107,12 @@ struct MonthDetailView: View {
             Button("Delete", role: .destructive) {
                 if let transaction = transactionPendingDeletion {
                     modelContext.delete(transaction)
-                    try? modelContext.save()
+                    do {
+                        try modelContext.save()
+                        ToastCenter.shared.success(CRUDFeedback.deleted("transaction"))
+                    } catch {
+                        ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
+                    }
                 }
                 transactionPendingDeletion = nil
             }

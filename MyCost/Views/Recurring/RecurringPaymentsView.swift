@@ -111,7 +111,12 @@ struct RecurringPaymentsView: View {
             transaction.updatedAt = .now
         }
 
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.added("recurring payment"))
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("recurring payment"))
+        }
         self.selectedSuggestion = nil
     }
 
@@ -314,7 +319,13 @@ private struct RecurringPaymentEditorView: View {
         payment.isActive = isActive
         payment.updatedAt = .now
 
-        try? modelContext.save()
-        dismiss()
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.updated("recurring payment"))
+            dismiss()
+        } catch {
+            validationMessage = "Save failed: \(error.localizedDescription)"
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("recurring payment"))
+        }
     }
 }

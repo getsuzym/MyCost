@@ -146,10 +146,12 @@ struct ReviewTransactionsView: View {
         if let error = outcome.saveError {
             importError = "\(error)\n\nNothing was imported. Your drafts are still here — try again."
             saveMessage = nil
+            ToastCenter.shared.show(CRUDFeedback.result(.add, "transaction", count: draftsToImport.count, persisted: false))
             return
         }
 
         ocrReviewStore.removeDrafts(ids: Set(draftsToImport.map(\.id)))
+        ToastCenter.shared.show(CRUDFeedback.result(.add, "transaction", count: outcome.importedCount, persisted: true))
         var parts = ["Saved \(outcome.importedCount) transaction\(outcome.importedCount == 1 ? "" : "s") — \(outcome.persistedTransactionCount) now in your history."]
         if scan.blockedCount > 0 {
             parts.append("\(scan.blockedCount) high-confidence duplicate\(scan.blockedCount == 1 ? "" : "s") skipped.")

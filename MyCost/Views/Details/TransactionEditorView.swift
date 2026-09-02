@@ -162,6 +162,7 @@ struct TransactionEditorView: View {
             }
             Button("Only This Transaction") {
                 pendingMerchantLearning = nil
+                ToastCenter.shared.success(CRUDFeedback.updated("transaction"))
                 dismiss()
             }
             Button("Cancel", role: .cancel) {
@@ -291,16 +292,22 @@ struct TransactionEditorView: View {
             }
         }
 
+        let action: CRUDFeedback.Action = { if case .add = mode { return .add } else { return .update } }()
+
         do {
             try modelContext.save()
         } catch {
             validationMessage = "Save failed: \(error.localizedDescription)"
+            ToastCenter.shared.show(CRUDFeedback.result(action, "transaction", persisted: false))
             return
         }
 
+        // A follow-up prompt (remember merchant rule) is still open — the toast
+        // fires from rememberPendingMerchantChange / "Only This Transaction".
         if pendingMerchantLearning != nil {
             return
         }
+        ToastCenter.shared.show(CRUDFeedback.result(action, "transaction", persisted: true))
         dismiss()
     }
 
@@ -408,15 +415,18 @@ struct TransactionEditorView: View {
             modelContext: modelContext
         )
         self.pendingMerchantLearning = nil
+        ToastCenter.shared.success(CRUDFeedback.updated("transaction"))
         dismiss()
     }
 
     private func saveAndDismiss() {
         do {
             try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.added("transaction"))
             dismiss()
         } catch {
             validationMessage = "Save failed: \(error.localizedDescription)"
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
         }
     }
 

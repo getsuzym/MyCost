@@ -85,9 +85,14 @@ struct TransactionHistoryView: View {
     }
 
     private func deleteTransactions(at offsets: IndexSet) {
-        for transaction in filteredTransactions.elements(at: offsets) {
-            modelContext.delete(transaction)
+        let toDelete = filteredTransactions.elements(at: offsets)
+        guard !toDelete.isEmpty else { return }
+        toDelete.forEach(modelContext.delete)
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.deleted("transaction", count: toDelete.count))
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
         }
-        try? modelContext.save()
     }
 }

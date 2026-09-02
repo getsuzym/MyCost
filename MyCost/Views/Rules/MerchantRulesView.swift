@@ -65,10 +65,15 @@ struct MerchantRulesView: View {
     }
 
     private func deleteRules(at offsets: IndexSet) {
-        for rule in merchantRules.elements(at: offsets) {
-            modelContext.delete(rule)
+        let toDelete = merchantRules.elements(at: offsets)
+        guard !toDelete.isEmpty else { return }
+        toDelete.forEach(modelContext.delete)
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.deleted("rule", count: toDelete.count))
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.deleteFailure("rule"))
         }
-        try? modelContext.save()
     }
 }
 
@@ -202,6 +207,7 @@ private struct MerchantRuleEditorView: View {
         }
 
         let category = categories.first { $0.id == selectedCategoryID }
+        let isEditing = rule != nil
         if let rule {
             merchantRuleService.updateRule(
                 rule,
@@ -221,7 +227,13 @@ private struct MerchantRuleEditorView: View {
             modelContext.insert(rule)
         }
 
-        try? modelContext.save()
-        dismiss()
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(isEditing ? CRUDFeedback.updated("rule") : CRUDFeedback.added("rule"))
+            dismiss()
+        } catch {
+            validationMessage = "Save failed: \(error.localizedDescription)"
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("rule"))
+        }
     }
 }

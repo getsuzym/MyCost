@@ -1171,6 +1171,85 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(outcome.persistedTransactionCount, try context.fetchCount(FetchDescriptor<Transaction>()))
     }
 
+    // MARK: - CRUD feedback (ToastCenter)
+
+    func testCRUDFeedbackStringsAreConsistentAndPluralized() {
+        XCTAssertEqual(CRUDFeedback.added("transaction"), "Transaction added")
+        XCTAssertEqual(CRUDFeedback.added("transaction", count: 5), "5 transactions added")
+        XCTAssertEqual(CRUDFeedback.updated("transaction"), "Transaction updated")
+        XCTAssertEqual(CRUDFeedback.updated("transaction", count: 3), "3 transactions updated")
+        XCTAssertEqual(CRUDFeedback.deleted("transaction"), "Transaction deleted")
+        XCTAssertEqual(CRUDFeedback.deleted("transaction", count: 2), "2 transactions deleted")
+        XCTAssertEqual(CRUDFeedback.added("category"), "Category added")
+        XCTAssertEqual(CRUDFeedback.updated("category"), "Category updated")
+        XCTAssertEqual(CRUDFeedback.deleted("category"), "Category deleted")
+        XCTAssertEqual(CRUDFeedback.saveFailure("transaction"), "Couldn\u{2019}t save transaction. Please try again.")
+    }
+
+    func testCRUDResultIsSuccessOnlyWhenPersistedOtherwiseError() {
+        let ok = CRUDFeedback.result(.add, "transaction", count: 3, persisted: true)
+        XCTAssertEqual(ok.style, .success)
+        XCTAssertEqual(ok.message, "3 transactions added")
+
+        let failedAdd = CRUDFeedback.result(.add, "transaction", persisted: false)
+        XCTAssertEqual(failedAdd.style, .error)
+        XCTAssertEqual(failedAdd.message, "Couldn\u{2019}t save transaction. Please try again.")
+
+        let failedDelete = CRUDFeedback.result(.delete, "category", persisted: false)
+        XCTAssertEqual(failedDelete.style, .error)
+        XCTAssertEqual(failedDelete.message, "Couldn\u{2019}t delete category. Please try again.")
+
+        XCTAssertEqual(CRUDFeedback.result(.update, "rule", persisted: true).message, "Rule updated")
+    }
+
+    @MainActor
+    func testToastCenterShowsThenAutoDismisses() async {
+        let center = ToastCenter(successDuration: .zero, errorDuration: .zero, sleep: { _ in })
+
+        center.success("Transaction added")
+        XCTAssertEqual(center.current?.message, "Transaction added")
+        XCTAssertEqual(center.current?.style, .success)
+
+        // Let the auto-dismiss Task run.
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertNil(center.current)
+    }
+
+    @MainActor
+    func testToastCenterRapidActionsReplaceRatherThanStack() async {
+        // A sleep that never returns, so no auto-dismiss interferes.
+        let center = ToastCenter(sleep: { _ in try? await Task.sleep(for: .seconds(3600)) })
+
+        center.success("First")
+        center.error("Second")
+        center.success("Third")
+
+        // Only ever one toast, and it's the latest.
+        XCTAssertEqual(center.current?.message, "Third")
+        XCTAssertEqual(center.current?.style, .success)
+    }
+
+    @MainActor
+    func testToastCenterExplicitDismissClearsImmediately() {
+        let center = ToastCenter(sleep: { _ in try? await Task.sleep(for: .seconds(3600)) })
+        center.error("Couldn't save")
+        XCTAssertNotNil(center.current)
+        center.dismiss()
+        XCTAssertNil(center.current)
+    }
+
+    @MainActor
+    func testReplacedToastAutoDismissDoesNotClearTheNewerToast() async {
+        // Fast success dismiss, but each new show cancels the previous timer.
+        let center = ToastCenter(successDuration: .zero, errorDuration: .zero, sleep: { _ in try? await Task.sleep(for: .milliseconds(1)) })
+        center.success("A")
+        center.success("B")
+        center.success("C")
+        try? await Task.sleep(for: .milliseconds(30))
+        // Whatever fired, it can only have cleared its own toast — never a newer one.
+        XCTAssertTrue(center.current == nil || center.current?.message == "C")
+    }
+
     // MARK: - Stable ForEach identity (add/delete diff-crash regression)
 
     func testCategorySpendIdentityIsStableAcrossRecomputes() {

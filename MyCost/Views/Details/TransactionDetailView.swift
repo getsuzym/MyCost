@@ -58,11 +58,19 @@ struct TransactionDetailView: View {
             }
         }
         .confirmationDialog("Delete this transaction?", isPresented: $isShowingDeleteConfirmation, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                modelContext.delete(transaction)
-                try? modelContext.save()
-                dismiss()
-            }
+            Button("Delete", role: .destructive, action: deleteTransaction)
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func deleteTransaction() {
+        modelContext.delete(transaction)
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.deleted("transaction"))
+            dismiss()
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
         }
     }
 }
