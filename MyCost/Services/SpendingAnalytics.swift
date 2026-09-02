@@ -43,9 +43,13 @@ struct SpendingAnalytics {
             )
         }
 
+        // Half-open [start, end): DateInterval.contains is end-inclusive, which
+        // would double-count a transaction dated exactly at 00:00 on the 1st of
+        // the next month into both months.
         let includedTransactions = transactions.filter {
             !$0.isExcluded &&
-            interval.contains($0.transactionDate)
+            $0.transactionDate >= interval.start &&
+            $0.transactionDate < interval.end
         }
 
         let postedTransactions = includedTransactions.filter { $0.status == .posted }
