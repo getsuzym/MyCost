@@ -40,6 +40,11 @@
 		00000000000000000000011F /* MerchantCategorizationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000020 /* MerchantCategorizationCoordinator.swift */; };
 		000000000000000000000120 /* AICategorizationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000021 /* AICategorizationController.swift */; };
 		000000000000000000000121 /* AICategorizationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000022 /* AICategorizationSettingsView.swift */; };
+		000000000000000000000122 /* TransactionTextHeuristics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000023 /* TransactionTextHeuristics.swift */; };
+		000000000000000000000123 /* OCRTextObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000024 /* OCRTextObservation.swift */; };
+		000000000000000000000124 /* TransactionRegionDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000025 /* TransactionRegionDetector.swift */; };
+		000000000000000000000125 /* TransactionGrouper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000026 /* TransactionGrouper.swift */; };
+		000000000000000000000126 /* OCRDebugOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000027 /* OCRDebugOverlayView.swift */; };
 		0000000000000000000009A4 /* MyCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009A3 /* MyCostTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -78,6 +83,11 @@
 		000000000000000000000020 /* MerchantCategorizationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantCategorizationCoordinator.swift; sourceTree = "<group>"; };
 		000000000000000000000021 /* AICategorizationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AICategorizationController.swift; sourceTree = "<group>"; };
 		000000000000000000000022 /* AICategorizationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AICategorizationSettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000023 /* TransactionTextHeuristics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionTextHeuristics.swift; sourceTree = "<group>"; };
+		000000000000000000000024 /* OCRTextObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTextObservation.swift; sourceTree = "<group>"; };
+		000000000000000000000025 /* TransactionRegionDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionRegionDetector.swift; sourceTree = "<group>"; };
+		000000000000000000000026 /* TransactionGrouper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionGrouper.swift; sourceTree = "<group>"; };
+		000000000000000000000027 /* OCRDebugOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRDebugOverlayView.swift; sourceTree = "<group>"; };
 		8A26197730479CE900C9C94A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0000000000000000000009A2 /* MyCostTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyCostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000009A3 /* MyCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyCostTests.swift; sourceTree = "<group>"; };
@@ -160,6 +170,10 @@
 				000000000000000000000017 /* TransactionCandidateParser.swift */,
 				000000000000000000000018 /* OCRTransactionReviewStore.swift */,
 				00000000000000000000001C /* OCRTransactionImportCoordinator.swift */,
+				000000000000000000000023 /* TransactionTextHeuristics.swift */,
+				000000000000000000000024 /* OCRTextObservation.swift */,
+				000000000000000000000025 /* TransactionRegionDetector.swift */,
+				000000000000000000000026 /* TransactionGrouper.swift */,
 				000000000000000000000009 /* MerchantRuleService.swift */,
 				00000000000000000000001D /* MerchantCategorizationProvider.swift */,
 				00000000000000000000001E /* AICredentialStore.swift */,
@@ -201,6 +215,7 @@
 			isa = PBXGroup;
 			children = (
 				00000000000000000000000D /* ImportView.swift */,
+				000000000000000000000027 /* OCRDebugOverlayView.swift */,
 			);
 			path = Import;
 			sourceTree = "<group>";
@@ -380,6 +395,11 @@
 				00000000000000000000011F /* MerchantCategorizationCoordinator.swift in Sources */,
 				000000000000000000000120 /* AICategorizationController.swift in Sources */,
 				000000000000000000000121 /* AICategorizationSettingsView.swift in Sources */,
+				000000000000000000000122 /* TransactionTextHeuristics.swift in Sources */,
+				000000000000000000000123 /* OCRTextObservation.swift in Sources */,
+				000000000000000000000124 /* TransactionRegionDetector.swift in Sources */,
+				000000000000000000000125 /* TransactionGrouper.swift in Sources */,
+				000000000000000000000126 /* OCRDebugOverlayView.swift in Sources */,
 				000000000000000000000109 /* MerchantRuleService.swift in Sources */,
 				00000000000000000000010A /* SpendingAnalytics.swift in Sources */,
 				000000000000000000000119 /* RecurringPaymentSuggestionService.swift in Sources */,

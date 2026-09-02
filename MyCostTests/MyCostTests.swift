@@ -725,6 +725,291 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.nonRecurringTotal, -12)
     }
 
+    // MARK: - Spatial transaction grouping
+
+    /// Build a normalized OCR observation (top-left origin, y down).
+    private func obs(
+        _ text: String,
+        x: Double, y: Double,
+        w: Double = 0.30, h: Double = 0.03,
+        confidence: Double = 0.9
+    ) -> OCRTextObservation {
+        OCRTextObservation(text: text, confidence: confidence, frame: CGRect(x: x, y: y, width: w, height: h))
+    }
+
+    private func groupCandidates(
+        _ observations: [OCRTextObservation],
+        dividers: [DividerLine] = []
+    ) -> [TransactionCandidate] {
+        let regions = TransactionRegionDetector().detectRegions(from: observations, dividers: dividers)
+        return TransactionGrouper(referenceDate: date(2026, 8, 31))
+            .candidates(from: regions, originalOCRText: observations.map(\.text).joined(separator: "\n"))
+    }
+
+    func testSpatialGrouperPairsRightAlignedAmountWithLeftMerchantForSingleLineRows() {
+        let observations = [
+            obs("TRADER JOES", x: 0.06, y: 0.10, w: 0.42),
+            obs("64.22", x: 0.80, y: 0.10, w: 0.14),
+            obs("CITY TRANSIT", x: 0.06, y: 0.20, w: 0.42),
+            obs("2.90", x: 0.83, y: 0.20, w: 0.11),
+            obs("CLOUD STORAGE", x: 0.06, y: 0.30, w: 0.42),
+            obs("9.99", x: 0.82, y: 0.30, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates.count, 3)
+        XCTAssertEqual(candidates[0].amount, 64.22)
+        XCTAssertTrue(candidates[0].rawMerchantDescription.contains("TRADER"))
+        XCTAssertEqual(candidates[1].amount, 2.90)
+        XCTAssertTrue(candidates[1].rawMerchantDescription.contains("TRANSIT"))
+        XCTAssertEqual(candidates[2].amount, 9.99)
+        XCTAssertFalse(candidates.contains { $0.validationFlags.contains(.missingAmount) })
+    }
+
+    func testSpatialGrouperIgnoresOCROutputOrderAndUsesPosition() {
+        let ordered = [
+            obs("TRADER JOES", x: 0.06, y: 0.10, w: 0.42),
+            obs("64.22", x: 0.80, y: 0.10, w: 0.14),
+            obs("CITY TRANSIT", x: 0.06, y: 0.20, w: 0.42),
+            obs("2.90", x: 0.83, y: 0.20, w: 0.11)
+        ]
+
+        // OCR hands back the amounts first, then the merchants, reversed.
+        let scrambled = Array(ordered.reversed())
+        let candidates = groupCandidates(scrambled)
+
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(candidates[0].amount, 64.22)
+        XCTAssertTrue(candidates[0].rawMerchantDescription.contains("TRADER"))
+        XCTAssertEqual(candidates[1].amount, 2.90)
+        XCTAssertTrue(candidates[1].rawMerchantDescription.contains("TRANSIT"))
+    }
+
+    func testSpatialGrouperKeepsMultiLineMerchantDescriptionInOneRegion() {
+        let observations = [
+            obs("COFFEE ROASTERS", x: 0.06, y: 0.10, w: 0.5),
+            obs("12.50", x: 0.82, y: 0.10, w: 0.12),
+            obs("123 MAIN ST PORTLAND OR", x: 0.06, y: 0.145, w: 0.6, h: 0.025),
+            obs("WHOLE FOODS", x: 0.06, y: 0.34, w: 0.4),
+            obs("58.10", x: 0.82, y: 0.34, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(candidates[0].amount, 12.50)
+        XCTAssertTrue(candidates[0].rawMerchantDescription.contains("COFFEE ROASTERS"))
+        XCTAssertTrue(candidates[0].rawMerchantDescription.contains("MAIN ST"))
+        XCTAssertEqual(candidates[1].amount, 58.10)
+    }
+
+    func testSpatialGrouperDetectsPendingStatusFromNearbyLabel() {
+        let observations = [
+            obs("NETFLIX", x: 0.06, y: 0.10, w: 0.3),
+            obs("15.99", x: 0.82, y: 0.10, w: 0.12),
+            obs("Pending", x: 0.06, y: 0.142, w: 0.2, h: 0.024),
+            obs("SPOTIFY", x: 0.06, y: 0.32, w: 0.3),
+            obs("10.99", x: 0.82, y: 0.32, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates[0].status, .pending)
+        XCTAssertFalse(candidates[0].validationFlags.contains(.missingStatus))
+        XCTAssertFalse(candidates[0].rawMerchantDescription.localizedCaseInsensitiveContains("pending"))
+    }
+
+    func testSpatialGrouperToleratesDifferentRowHeights() {
+        let observations = [
+            obs("SMALL ROW", x: 0.06, y: 0.10, w: 0.3, h: 0.018),
+            obs("5.00", x: 0.82, y: 0.10, w: 0.12, h: 0.018),
+            obs("TALL ROW", x: 0.06, y: 0.30, w: 0.3, h: 0.05),
+            obs("6.00", x: 0.82, y: 0.305, w: 0.12, h: 0.05),
+            obs("MEDIUM ROW", x: 0.06, y: 0.52, w: 0.3, h: 0.03),
+            obs("7.00", x: 0.82, y: 0.52, w: 0.12, h: 0.03)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates.count, 3)
+        XCTAssertEqual(candidates.compactMap(\.amount), [5.00, 6.00, 7.00])
+    }
+
+    func testRegionDetectorSplitsOnDividerLinesEvenWhenSpacingIsUniform() {
+        // txn2's amount didn't OCR (a pending charge), so the amount-anchor
+        // heuristic can't tell it apart from txn1 — only the divider can.
+        let observations = [
+            obs("MERCHANT ONE", x: 0.06, y: 0.100, w: 0.4),
+            obs("20.00", x: 0.82, y: 0.100, w: 0.12),
+            obs("MERCHANT TWO", x: 0.06, y: 0.135, w: 0.4),
+            obs("Pending", x: 0.06, y: 0.165, w: 0.2, h: 0.025),
+            obs("MERCHANT THREE", x: 0.06, y: 0.200, w: 0.4),
+            obs("40.00", x: 0.82, y: 0.200, w: 0.12)
+        ]
+
+        let withoutDivider = TransactionRegionDetector().detectRegions(from: observations)
+        let withDivider = TransactionRegionDetector().detectRegions(
+            from: observations,
+            dividers: [DividerLine(y: 0.122)]
+        )
+
+        XCTAssertEqual(withoutDivider.count, 2)
+        XCTAssertEqual(withDivider.count, 3)
+        XCTAssertTrue(withDivider[0].text.contains("MERCHANT ONE"))
+        XCTAssertFalse(withDivider[0].text.contains("MERCHANT TWO"))
+        XCTAssertTrue(withDivider[1].text.localizedCaseInsensitiveContains("pending"))
+    }
+
+    func testRegionDetectorFallsBackToAmountAnchoredRegionsWithoutDividers() {
+        let observations = [
+            obs("A", x: 0.06, y: 0.10, w: 0.2),
+            obs("1.00", x: 0.82, y: 0.10, w: 0.12),
+            obs("B", x: 0.06, y: 0.16, w: 0.2),
+            obs("2.00", x: 0.82, y: 0.16, w: 0.12),
+            obs("C", x: 0.06, y: 0.22, w: 0.2),
+            obs("3.00", x: 0.82, y: 0.22, w: 0.12)
+        ]
+
+        let regions = TransactionRegionDetector().detectRegions(from: observations)
+
+        XCTAssertEqual(regions.count, 3)
+    }
+
+    func testSpatialGrouperPrefersRightAlignedAmountOverLeftSideNumber() {
+        let observations = [
+            obs("REF 12.00 STORE", x: 0.06, y: 0.10, w: 0.5),
+            obs("45.67", x: 0.82, y: 0.10, w: 0.12),
+            obs("NEXT MERCHANT", x: 0.06, y: 0.30, w: 0.4),
+            obs("8.00", x: 0.82, y: 0.30, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates[0].amount, 45.67)
+        XCTAssertTrue(candidates[0].validationFlags.contains(.multipleAmounts))
+    }
+
+    func testSpatialGrouperMarksRegionUncertainWhenRightAlignedAmountsConflict() throws {
+        // Two right-aligned amounts on the same row — e.g. an "installment"
+        // figure next to the charge. Position can't disambiguate them.
+        let observations = [
+            obs("AMBIGUOUS MERCHANT", x: 0.06, y: 0.10, w: 0.45),
+            obs("50.00", x: 0.66, y: 0.10, w: 0.12),
+            obs("3.99", x: 0.83, y: 0.10, w: 0.12),
+            obs("CLEAR MERCHANT", x: 0.06, y: 0.34, w: 0.4),
+            obs("9.00", x: 0.82, y: 0.34, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+        let ambiguous = try XCTUnwrap(candidates.first { $0.rawMerchantDescription.contains("AMBIGUOUS") })
+
+        XCTAssertNil(ambiguous.amount)
+        XCTAssertTrue(ambiguous.validationFlags.contains(.multipleAmounts))
+        XCTAssertTrue(ambiguous.validationFlags.contains(.ambiguousLayout))
+    }
+
+    func testSpatialGrouperInheritsDateFromSectionHeaderAboveEveryRow() {
+        let observations = [
+            obs("August 29, 2026", x: 0.06, y: 0.05, w: 0.4),
+            obs("GOOGLE YOUTUBE", x: 0.06, y: 0.16, w: 0.4),
+            obs("25.75", x: 0.82, y: 0.16, w: 0.12),
+            obs("AMAZON", x: 0.06, y: 0.28, w: 0.4),
+            obs("11.19", x: 0.82, y: 0.28, w: 0.12)
+        ]
+
+        let candidates = groupCandidates(observations)
+
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(candidates[0].detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(candidates[1].detectedDate, date(2026, 8, 29))
+        XCTAssertFalse(candidates.contains { $0.validationFlags.contains(.missingDate) })
+    }
+
+    func testSpatialGrouperPreservesObservationTextFrameAndConfidence() throws {
+        let observations = [
+            obs("MERCHANT", x: 0.06, y: 0.10, w: 0.4, confidence: 0.81),
+            obs("14.00", x: 0.82, y: 0.10, w: 0.12, confidence: 0.44)
+        ]
+
+        let candidate = try XCTUnwrap(groupCandidates(observations).first)
+
+        XCTAssertEqual(candidate.observations.count, 2)
+        let amountObs = try XCTUnwrap(candidate.observations.first { $0.text == "14.00" })
+        XCTAssertEqual(amountObs.confidence, 0.44)
+        XCTAssertEqual(amountObs.frame, CGRect(x: 0.82, y: 0.10, width: 0.12, height: 0.03))
+    }
+
+    func testSpatialGrouperHandlesRealCanadianVisaScreenshotLayout() {
+        // Actual Vision OCR observations (bounding boxes, top-left origin) from
+        // a real bank screenshot: section-date headers, merchant / city / amount
+        // on separate rows, "›" chevrons, a card-balance line and nav chrome.
+        let observations = [
+            obs("6:12 4", x: 0.110, y: 0.025, w: 0.138, h: 0.019),
+            obs("984", x: 0.836, y: 0.026, w: 0.085, h: 0.017),
+            obs("VISA", x: 0.044, y: 0.131, w: 0.085, h: 0.019),
+            obs(":", x: 0.931, y: 0.144, w: 0.025, h: 0.022),
+            obs("CAD 334.34", x: 0.047, y: 0.155, w: 0.258, h: 0.023),
+            obs("Postea u", x: 0.047, y: 0.193, w: 0.189, h: 0.015),
+            obs("Aug 29, 2026", x: 0.047, y: 0.256, w: 0.230, h: 0.021),
+            obs("GOOGLE*YOUTUBEPREMIUM", x: 0.047, y: 0.308, w: 0.560, h: 0.019),
+            obs("25.75 >", x: 0.808, y: 0.321, w: 0.157, h: 0.020),
+            obs("HALIFAX, NS", x: 0.047, y: 0.335, w: 0.218, h: 0.022),
+            obs("AMAZON", x: 0.050, y: 0.392, w: 0.177, h: 0.018),
+            obs("11.19 >", x: 0.824, y: 0.404, w: 0.139, h: 0.021),
+            obs("VANCOUVER, BC", x: 0.050, y: 0.420, w: 0.280, h: 0.019),
+            obs("CATHAYPACAIR1602135482141", x: 0.050, y: 0.478, w: 0.585, h: 0.016),
+            obs("VANCOUVER, BC", x: 0.050, y: 0.504, w: 0.280, h: 0.019),
+            obs("297.40 >", x: 0.786, y: 0.504, w: 0.176, h: 0.022),
+            obs("•° Pay in Installments", x: 0.050, y: 0.536, w: 0.362, h: 0.019),
+            obs("Aug 28, 2026", x: 0.050, y: 0.603, w: 0.230, h: 0.020),
+            obs("PAYMENT - THANK YOU /", x: 0.050, y: 0.654, w: 0.487, h: 0.020),
+            obs("-1,656.46 ›", x: 0.733, y: 0.668, w: 0.230, h: 0.021),
+            obs("PAIEMENT - MERCI", x: 0.050, y: 0.679, w: 0.362, h: 0.016),
+            obs("Aug 26, 2026", x: 0.050, y: 0.748, w: 0.230, h: 0.019),
+            obs("CATHAYPACAIR1602135408008", x: 0.050, y: 0.802, w: 0.601, h: 0.016),
+            obs("VANCOUVER, BC", x: 0.050, y: 0.830, w: 0.280, h: 0.018),
+            obs("699.79 >", x: 0.783, y: 0.829, w: 0.180, h: 0.020),
+            obs("Pay in Installments", x: 0.107, y: 0.863, w: 0.305, h: 0.016),
+            obs("Home", x: 0.056, y: 0.945, w: 0.088, h: 0.014),
+            obs("Accounts", x: 0.230, y: 0.945, w: 0.138, h: 0.013),
+            obs("Move Money", x: 0.606, y: 0.944, w: 0.184, h: 0.015),
+            obs("More", x: 0.858, y: 0.946, w: 0.075, h: 0.012)
+        ]
+
+        let candidates = groupCandidates(observations)
+        let byAmount = Dictionary(
+            uniqueKeysWithValues: candidates.compactMap { c in c.amount.map { ($0, c) } }
+        )
+
+        // Five real transactions, no card-balance row.
+        XCTAssertEqual(Set(candidates.compactMap(\.amount)), [25.75, 11.19, 297.40, -1656.46, 699.79])
+        XCTAssertFalse(candidates.contains { $0.amount == 334.34 })
+
+        // Amounts are paired with the correct merchant by position, not order.
+        XCTAssertTrue(byAmount[25.75]?.rawMerchantDescription.contains("GOOGLE") == true)
+        XCTAssertTrue(byAmount[11.19]?.rawMerchantDescription.contains("AMAZON") == true)
+
+        // Every transaction inherits its section's date header.
+        XCTAssertEqual(byAmount[25.75]?.detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(byAmount[297.40]?.detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(byAmount[-1656.46]?.detectedDate, date(2026, 8, 28))
+        XCTAssertEqual(byAmount[699.79]?.detectedDate, date(2026, 8, 26))
+    }
+
+    func testOCRTextObservationFlipsVisionBottomLeftOriginToTopLeft() {
+        let block = RecognizedTextBlock(
+            text: "X",
+            confidence: 0.9,
+            boundingBox: CGRect(x: 0.1, y: 0.7, width: 0.2, height: 0.05)
+        )
+
+        let observation = OCRTextObservation(block: block)
+
+        XCTAssertEqual(observation.frame, CGRect(x: 0.1, y: 0.25, width: 0.2, height: 0.05))
+        XCTAssertEqual(observation.text, "X")
+    }
+
     // MARK: - AI fallback categorization
 
     func testRecognizedTransactionResolvesViaRuleAndNeverCallsAI() async throws {

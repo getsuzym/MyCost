@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum TransactionCandidateStatus: String, Codable, CaseIterable, Equatable {
@@ -14,6 +15,9 @@ enum TransactionCandidateValidationFlag: String, Codable, Hashable {
     case missingStatus
     case multipleAmounts
     case possibleNonTransactionLine
+    /// The spatial grouper could not confidently resolve the region (e.g. no
+    /// clearly right-aligned amount, or conflicting amounts).
+    case ambiguousLayout
 }
 
 struct TransactionCandidateFieldConfidences: Codable, Equatable {
@@ -30,6 +34,15 @@ struct TransactionCandidateFieldConfidences: Codable, Equatable {
     )
 }
 
+/// One OCR observation kept verbatim on a candidate for debugging / the review
+/// overlay: recognized text, its normalized frame (top-left origin, y down),
+/// and the recognizer's confidence.
+struct TransactionCandidateObservation: Codable, Equatable {
+    var text: String
+    var frame: CGRect
+    var confidence: Double
+}
+
 struct TransactionCandidate: Identifiable, Codable, Equatable {
     let id: UUID
     var detectedDate: Date?
@@ -40,6 +53,8 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
     var sourceText: String
     var confidence: TransactionCandidateFieldConfidences
     var validationFlags: Set<TransactionCandidateValidationFlag>
+    /// Present when the candidate came from spatial grouping.
+    var observations: [TransactionCandidateObservation]
 
     init(
         id: UUID = UUID(),
@@ -50,7 +65,8 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
         originalOCRText: String,
         sourceText: String,
         confidence: TransactionCandidateFieldConfidences,
-        validationFlags: Set<TransactionCandidateValidationFlag>
+        validationFlags: Set<TransactionCandidateValidationFlag>,
+        observations: [TransactionCandidateObservation] = []
     ) {
         self.id = id
         self.detectedDate = detectedDate
@@ -61,16 +77,18 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
         self.sourceText = sourceText
         self.confidence = confidence
         self.validationFlags = validationFlags
+        self.observations = observations
     }
 }
 
+/// Flat, line-oriented fallback parser. Used when spatial grouping is not
+/// possible (no bounding boxes) or produced nothing. Spatial grouping via
+/// ``TransactionRegionDetector`` + ``TransactionGrouper`` is the primary path.
 struct TransactionCandidateParser {
-    private let calendar: Calendar
-    private let referenceDate: Date
+    private let heuristics: TransactionTextHeuristics
 
     init(calendar: Calendar = Calendar(identifier: .gregorian), referenceDate: Date = .now) {
-        self.calendar = calendar
-        self.referenceDate = referenceDate
+        self.heuristics = TransactionTextHeuristics(calendar: calendar, referenceDate: referenceDate)
     }
 
     func parse(ocrText: String) -> [TransactionCandidate] {
@@ -102,15 +120,7 @@ struct TransactionCandidateParser {
     /// inherits it — not just the first one.
     private func sectionDateHeaders(in lines: [String]) -> [(index: Int, date: Date)] {
         lines.enumerated().compactMap { index, line in
-            guard !containsAmount(in: line) else { return nil }
-            let detection = detectDate(in: line)
-            guard let date = detection.date, let original = detection.originalText else { return nil }
-            // A header is a line that is essentially just the date.
-            let remainder = line
-                .replacingOccurrences(of: original, with: " ")
-                .trimmingCharacters(in: CharacterSet(charactersIn: "-•·°:>‹›< ,"))
-            guard remainder.count <= 3 else { return nil }
-            return (index, date)
+            heuristics.dateOnlyHeader(in: line).map { (index, $0) }
         }
     }
 
@@ -122,18 +132,18 @@ struct TransactionCandidateParser {
         var ranges: [(start: Int, end: Int)] = []
 
         for (index, line) in lines.enumerated() {
-            guard containsAmount(in: line), !isLikelySummaryLine(line) else { continue }
+            guard heuristics.containsAmount(in: line), !isLikelySummaryLine(line) else { continue }
 
             var startIndex = index
             var lookback = index - 1
             while lookback >= 0, index - lookback <= 3 {
                 let previousLine = lines[lookback]
-                if containsAmount(in: previousLine) || isLikelySummaryLine(previousLine) || isNavigationLine(previousLine) {
+                if heuristics.containsAmount(in: previousLine) || isLikelySummaryLine(previousLine) || isNavigationLine(previousLine) {
                     break
                 }
 
                 startIndex = lookback
-                if detectDate(in: previousLine).date != nil {
+                if heuristics.detectDate(in: previousLine).date != nil {
                     break
                 }
                 lookback -= 1
@@ -154,10 +164,10 @@ struct TransactionCandidateParser {
                 index >= range.start && index <= range.end
             }
             guard !isAlreadyGrouped,
-                  !containsAmount(in: line),
+                  !heuristics.containsAmount(in: line),
                   !isLikelySummaryLine(line),
                   !isNavigationLine(line),
-                  detectDate(in: line).date != nil || detectStatus(in: line) != nil else {
+                  heuristics.detectDate(in: line).date != nil || heuristics.detectStatus(in: line) != nil else {
                 continue
             }
 
@@ -165,7 +175,7 @@ struct TransactionCandidateParser {
             var lookahead = index + 1
             while lookahead < lines.count, lookahead - index <= 2 {
                 let nextLine = lines[lookahead]
-                if containsAmount(in: nextLine) || isLikelySummaryLine(nextLine) || isNavigationLine(nextLine) {
+                if heuristics.containsAmount(in: nextLine) || isLikelySummaryLine(nextLine) || isNavigationLine(nextLine) {
                     break
                 }
                 endIndex = lookahead
@@ -185,16 +195,14 @@ struct TransactionCandidateParser {
     ) -> TransactionCandidate? {
         let sourceText = sourceLines.joined(separator: "\n")
         let joinedText = sourceLines.joined(separator: " ")
-        let amountMatches = amountMatches(in: joinedText)
-        let dateMatch = detectDate(in: joinedText)
-        let status = detectStatus(in: joinedText)
+        let amountMatches = heuristics.amountMatches(in: joinedText)
+        let dateMatch = heuristics.detectDate(in: joinedText)
+        let status = heuristics.detectStatus(in: joinedText)
         let removableFragments = (dateMatch.originalText.map { [$0] } ?? []) + amountMatches.map(\.originalText)
 
         var flags = Set<TransactionCandidateValidationFlag>()
         var confidence = TransactionCandidateFieldConfidences.empty
 
-        // A date on the transaction's own line wins; otherwise fall back to the
-        // section header date, if this group sits under one.
         let effectiveDate = dateMatch.date ?? fallbackDate
         let usedSectionDate = dateMatch.date == nil && fallbackDate != nil
 
@@ -221,7 +229,7 @@ struct TransactionCandidateParser {
         let selectedAmount = amountMatches.last
         confidence.amount = amountMatches.isEmpty ? 0 : (amountMatches.count == 1 ? 0.95 : 0.65)
 
-        let merchantDescription = cleanMerchantDescription(
+        let merchantDescription = heuristics.cleanMerchantDescription(
             from: joinedText,
             removing: removableFragments
         )
@@ -234,9 +242,7 @@ struct TransactionCandidateParser {
         }
         confidence.merchantDescription = merchantDescription.isEmpty ? 0 : 0.8
 
-        // Drop rows that carry an amount but no real merchant — card balances
-        // ("VISA / CAD 334.34"), status-bar noise, currency-code-only lines.
-        if isNonMerchantText(merchantDescription) {
+        if heuristics.isNonMerchantText(merchantDescription) {
             return nil
         }
 
@@ -254,188 +260,6 @@ struct TransactionCandidateParser {
             confidence: confidence,
             validationFlags: flags
         )
-    }
-
-    private func detectStatus(in text: String) -> TransactionCandidateStatus? {
-        let lowercased = text.lowercased()
-        if lowercased.contains("pending") ||
-            lowercased.contains("processing") ||
-            lowercased.contains("authorization") ||
-            lowercased.contains("temporary") {
-            return .pending
-        }
-
-        if lowercased.contains("posted") ||
-            lowercased.contains("cleared") ||
-            lowercased.contains("completed") ||
-            lowercased.contains("complete") {
-            return .posted
-        }
-
-        return nil
-    }
-
-    private func detectDate(in text: String) -> DateDetection {
-        for pattern in DatePattern.allCases {
-            guard let match = firstMatch(pattern.regex, in: text) else { continue }
-            guard let date = parseDate(match, pattern: pattern) else { continue }
-
-            return DateDetection(
-                date: date,
-                originalText: match,
-                confidence: pattern.hasYear ? 0.95 : 0.75,
-                inferredYear: !pattern.hasYear,
-                ambiguous: pattern.isNumericWithoutYear
-            )
-        }
-
-        return DateDetection(date: nil, originalText: nil, confidence: 0, inferredYear: false, ambiguous: false)
-    }
-
-    private func parseDate(_ text: String, pattern: DatePattern) -> Date? {
-        let normalized = text
-            .replacingOccurrences(of: ".", with: "")
-            .replacingOccurrences(of: ",", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        switch pattern {
-        case .iso:
-            return date(from: normalized, formats: ["yyyy-MM-dd"])
-        case .numericWithYear:
-            return date(from: normalized, formats: ["M/d/yyyy", "MM/dd/yyyy", "M/d/yy", "MM/dd/yy"])
-        case .numericWithoutYear:
-            return dateByInferringYear(monthDayText: normalized, formats: ["M/d", "MM/dd"])
-        case .monthNameWithYear:
-            return date(from: normalized, formats: ["MMM d yyyy", "MMMM d yyyy"])
-        case .monthNameWithoutYear:
-            return dateByInferringYear(monthDayText: normalized, formats: ["MMM d", "MMMM d"])
-        }
-    }
-
-    private func date(from text: String, formats: [String]) -> Date? {
-        for format in formats {
-            let formatter = DateFormatter()
-            formatter.calendar = calendar
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = calendar.timeZone
-            formatter.dateFormat = format
-            if let date = formatter.date(from: text) {
-                return calendar.startOfDay(for: date)
-            }
-        }
-        return nil
-    }
-
-    private func dateByInferringYear(monthDayText: String, formats: [String]) -> Date? {
-        let referenceYear = calendar.component(.year, from: referenceDate)
-
-        for format in formats {
-            let formatter = DateFormatter()
-            formatter.calendar = calendar
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = calendar.timeZone
-            formatter.dateFormat = "\(format) yyyy"
-
-            guard var date = formatter.date(from: "\(monthDayText) \(referenceYear)") else { continue }
-            date = calendar.startOfDay(for: date)
-
-            if let futureLimit = calendar.date(byAdding: .day, value: 31, to: referenceDate), date > futureLimit,
-               let previousYear = calendar.date(byAdding: .year, value: -1, to: date) {
-                return calendar.startOfDay(for: previousYear)
-            }
-
-            return date
-        }
-
-        return nil
-    }
-
-    private func containsAmount(in text: String) -> Bool {
-        !amountMatches(in: text).isEmpty
-    }
-
-    private func amountMatches(in text: String) -> [AmountMatch] {
-        let pattern = #"(?<![\d])[-+]?\(?\$?\s*\d{1,3}(?:,\d{3})*\.\d{2}\)?(?![\d])|(?<![\d])[-+]?\(?\$?\s*\d+\.\d{2}\)?(?![\d])"#
-        return regexMatches(pattern, in: text).compactMap { match in
-            let trimmed = match.trimmingCharacters(in: .whitespacesAndNewlines)
-            let isParenthesized = trimmed.hasPrefix("(") && trimmed.hasSuffix(")")
-            let isExplicitNegative = trimmed.hasPrefix("-")
-            let isExplicitPositive = trimmed.hasPrefix("+")
-            let numericText = trimmed
-                .replacingOccurrences(of: "$", with: "")
-                .replacingOccurrences(of: ",", with: "")
-                .replacingOccurrences(of: "(", with: "")
-                .replacingOccurrences(of: ")", with: "")
-                .replacingOccurrences(of: "+", with: "")
-                .replacingOccurrences(of: "-", with: "")
-                .replacingOccurrences(of: " ", with: "")
-
-            guard var value = Decimal(string: numericText, locale: Locale(identifier: "en_US_POSIX")) else {
-                return nil
-            }
-
-            if isParenthesized || isExplicitNegative || (!isExplicitPositive && isLikelyCredit(text)) {
-                value = -value
-            }
-
-            return AmountMatch(value: value, originalText: match)
-        }
-    }
-
-    private func cleanMerchantDescription(from text: String, removing fragments: [String]) -> String {
-        var cleaned = text
-
-        for fragment in fragments where !fragment.isEmpty {
-            cleaned = cleaned.replacingOccurrences(of: fragment, with: " ")
-        }
-
-        for word in ["Pending", "Posted", "Cleared", "Completed", "Complete", "Processing", "Authorization", "Temporary"] {
-            cleaned = cleaned.replacingOccurrences(of: word, with: " ", options: [.caseInsensitive])
-        }
-
-        for label in ["Card Purchase", "Debit Card Purchase", "Purchase", "Transaction"] {
-            cleaned = cleaned.replacingOccurrences(of: label, with: " ", options: [.caseInsensitive])
-        }
-
-        return cleaned
-            .components(separatedBy: .whitespacesAndNewlines)
-            .map { $0.trimmingCharacters(in: chevronAndBulletCharacters) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-            .trimmingCharacters(in: chevronAndBulletCharacters.union(.whitespaces))
-    }
-
-    private var chevronAndBulletCharacters: CharacterSet {
-        CharacterSet(charactersIn: "-*•·°:>‹›<»«")
-    }
-
-    /// True when the text has some content but no token that could plausibly be
-    /// a merchant name — only currency codes, card-network words, or bare
-    /// numbers/times. An empty string is *not* rejected here; that case is left
-    /// to the missing-merchant flag and the caller's keep-for-review guard.
-    private func isNonMerchantText(_ text: String) -> Bool {
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        let ignored: Set<String> = [
-            "CAD", "USD", "EUR", "GBP", "AUD", "MXN", "JPY",
-            "VISA", "MASTERCARD", "AMEX", "DISCOVER", "INTERAC",
-            "DEBIT", "CREDIT", "CARD", "ACCOUNT", "BALANCE"
-        ]
-        let meaningful = text
-            .split(separator: " ")
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",.:;")).uppercased() }
-            .filter { token in
-                guard token.count > 1, !ignored.contains(token) else { return false }
-                return token.contains { $0.isLetter }
-            }
-        return meaningful.isEmpty
-    }
-
-    private func isLikelyCredit(_ text: String) -> Bool {
-        let lowercased = text.lowercased()
-        return lowercased.contains("refund") ||
-            lowercased.contains("credit") ||
-            lowercased.contains("cashback") ||
-            lowercased.contains("payment thank you")
     }
 
     private func isLikelySummaryLine(_ text: String) -> Bool {
@@ -460,72 +284,7 @@ struct TransactionCandidateParser {
 
     private func isStatusOnlyLine(_ text: String) -> Bool {
         let lowercased = text.lowercased()
-        guard detectStatus(in: lowercased) != nil else { return false }
-        return !containsAmount(in: lowercased) && detectDate(in: lowercased).date == nil
-    }
-
-    private func firstMatch(_ pattern: String, in text: String) -> String? {
-        regexMatches(pattern, in: text).first
-    }
-
-    private func regexMatches(_ pattern: String, in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return []
-        }
-
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.matches(in: text, range: range).compactMap { match in
-            guard let range = Range(match.range, in: text) else { return nil }
-            return String(text[range])
-        }
-    }
-}
-
-private struct AmountMatch {
-    let value: Decimal
-    let originalText: String
-}
-
-private struct DateDetection {
-    let date: Date?
-    let originalText: String?
-    let confidence: Double
-    let inferredYear: Bool
-    let ambiguous: Bool
-}
-
-private enum DatePattern: CaseIterable {
-    case iso
-    case numericWithYear
-    case numericWithoutYear
-    case monthNameWithYear
-    case monthNameWithoutYear
-
-    var regex: String {
-        switch self {
-        case .iso:
-            #"\b\d{4}-\d{1,2}-\d{1,2}\b"#
-        case .numericWithYear:
-            #"\b\d{1,2}/\d{1,2}/(?:\d{2}|\d{4})\b"#
-        case .numericWithoutYear:
-            #"\b\d{1,2}/\d{1,2}\b"#
-        case .monthNameWithYear:
-            #"\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\.?\s+\d{1,2},?\s+\d{4}\b"#
-        case .monthNameWithoutYear:
-            #"\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\.?\s+\d{1,2}\b"#
-        }
-    }
-
-    var hasYear: Bool {
-        switch self {
-        case .iso, .numericWithYear, .monthNameWithYear:
-            true
-        case .numericWithoutYear, .monthNameWithoutYear:
-            false
-        }
-    }
-
-    var isNumericWithoutYear: Bool {
-        self == .numericWithoutYear
+        guard heuristics.detectStatus(in: lowercased) != nil else { return false }
+        return !heuristics.containsAmount(in: lowercased) && heuristics.detectDate(in: lowercased).date == nil
     }
 }

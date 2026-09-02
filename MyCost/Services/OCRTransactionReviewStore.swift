@@ -101,10 +101,12 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         case .merchant:
             validationFlags.contains(.missingMerchantDescription) ||
                 validationFlags.contains(.possibleNonTransactionLine) ||
+                validationFlags.contains(.ambiguousLayout) ||
                 confidence.merchantDescription < 0.75
         case .amount:
             validationFlags.contains(.missingAmount) ||
                 validationFlags.contains(.multipleAmounts) ||
+                validationFlags.contains(.ambiguousLayout) ||
                 confidence.amount < 0.8
         case .status:
             validationFlags.contains(.missingStatus) ||

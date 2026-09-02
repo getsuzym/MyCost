@@ -12,7 +12,14 @@ struct ExtractedTransaction: Identifiable {
 struct ScreenshotImportResult {
     let imageSize: CGSize
     let recognizedTextBlocks: [RecognizedTextBlock]
+    /// Positioned OCR observations (top-left origin), kept for the debug overlay.
+    let observations: [OCRTextObservation]
+    /// Transaction regions found by spatial grouping, for the debug overlay.
+    let regions: [TransactionRegion]
     let transactionCandidates: [TransactionCandidate]
+    /// Whether `transactionCandidates` came from spatial grouping (`true`) or
+    /// the flat-text fallback (`false`).
+    let usedSpatialGrouping: Bool
 }
 
 enum ScreenshotImportError: LocalizedError, Equatable {
@@ -31,13 +38,19 @@ enum ScreenshotImportError: LocalizedError, Equatable {
 
 struct ScreenshotImportService {
     private let ocrService: OCRServicing
+    private let regionDetector: TransactionRegionDetector
+    private let grouper: TransactionGrouper
     private let transactionParser: TransactionCandidateParser
 
     init(
         ocrService: OCRServicing = VisionOCRService(),
+        regionDetector: TransactionRegionDetector = TransactionRegionDetector(),
+        grouper: TransactionGrouper = TransactionGrouper(),
         transactionParser: TransactionCandidateParser = TransactionCandidateParser()
     ) {
         self.ocrService = ocrService
+        self.regionDetector = regionDetector
+        self.grouper = grouper
         self.transactionParser = transactionParser
     }
 
@@ -47,12 +60,29 @@ struct ScreenshotImportService {
             guard !textBlocks.isEmpty else {
                 throw ScreenshotImportError.noRecognizedText
             }
-            let transactionCandidates = transactionParser.parse(lines: textBlocks.map(\.text))
+
+            // Primary path: use the OCR bounding boxes to reconstruct the
+            // statement's visual rows and group each transaction spatially.
+            let observations = textBlocks.map(OCRTextObservation.init(block:))
+            let regions = regionDetector.detectRegions(from: observations)
+            let originalOCRText = observations.map(\.text).joined(separator: "\n")
+            var candidates = grouper.candidates(from: regions, originalOCRText: originalOCRText)
+            var usedSpatialGrouping = true
+
+            // Fallback: if geometry told us nothing (degenerate boxes, or a
+            // layout the grouper couldn't split), parse the flat text.
+            if candidates.isEmpty {
+                candidates = transactionParser.parse(lines: textBlocks.map(\.text))
+                usedSpatialGrouping = false
+            }
 
             return ScreenshotImportResult(
                 imageSize: image.size,
                 recognizedTextBlocks: textBlocks,
-                transactionCandidates: transactionCandidates
+                observations: observations,
+                regions: regions,
+                transactionCandidates: candidates,
+                usedSpatialGrouping: usedSpatialGrouping
             )
         } catch let error as ScreenshotImportError {
             throw error

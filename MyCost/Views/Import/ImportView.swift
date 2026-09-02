@@ -12,6 +12,9 @@ struct ImportView: View {
     @State private var statusMessage = "Select a banking screenshot to prepare it for OCR review."
     @State private var errorMessage: String?
     @State private var isProcessing = false
+    @State private var lastObservations: [OCRTextObservation] = []
+    @State private var lastRegions: [TransactionRegion] = []
+    @State private var isShowingDebugOverlay = false
 
     private let importService = ScreenshotImportService()
 
@@ -36,6 +39,17 @@ struct ImportView: View {
                     Label("Select Screenshot", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("import.selectScreenshot")
+
+                #if DEBUG
+                if selectedImage != nil, !lastObservations.isEmpty {
+                    Button {
+                        isShowingDebugOverlay = true
+                    } label: {
+                        Label("Debug: OCR layout overlay", systemImage: "square.dashed.inset.filled")
+                    }
+                    .accessibilityIdentifier("import.debugOverlay")
+                }
+                #endif
             }
 
             Section("Import Status") {
@@ -68,6 +82,17 @@ struct ImportView: View {
             }
         }
         .navigationTitle("Import")
+        #if DEBUG
+        .sheet(isPresented: $isShowingDebugOverlay) {
+            if let selectedImage {
+                OCRDebugOverlayView(
+                    image: selectedImage,
+                    observations: lastObservations,
+                    regions: lastRegions
+                )
+            }
+        }
+        #endif
         .sheet(isPresented: $isShowingImagePicker) {
             ImagePicker { result in
                 switch result {
@@ -95,13 +120,18 @@ struct ImportView: View {
                 let result = try await importService.processScreenshot(image)
                 await MainActor.run {
                     recognizedTextBlocks = result.recognizedTextBlocks
+                    lastObservations = result.observations
+                    lastRegions = result.regions
                     ocrReviewStore.replaceCandidates(result.transactionCandidates, merchantRules: merchantRules)
-                    statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks and detected \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
+                    let method = result.usedSpatialGrouping ? "grouped \(result.regions.count) regions" : "flat-text fallback"
+                    statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks; \(method); \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
                     isProcessing = false
                 }
             } catch {
                 await MainActor.run {
                     recognizedTextBlocks = []
+                    lastObservations = []
+                    lastRegions = []
                     ocrReviewStore.clear()
                     errorMessage = error.localizedDescription
                     statusMessage = "Screenshot processed with errors."
