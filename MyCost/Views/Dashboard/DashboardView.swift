@@ -43,7 +43,6 @@ struct DashboardView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
-                            .contentTransition(.numericText())
 
                         Button {
                             stepMonth(1)
@@ -77,20 +76,22 @@ struct DashboardView: View {
                 Text("Monthly Spending")
             }
 
-            if !months.isEmpty {
-                Section("Months") {
-                    ForEach(months, id: \.self) { monthStart in
-                        NavigationLink {
-                            MonthDetailView(month: monthStart)
-                        } label: {
-                            let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
-                            let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.amount }
-                            HStack {
-                                Text(Formatters.month.string(from: monthStart))
-                                Spacer()
-                                Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
-                                    .foregroundStyle(.secondary)
-                            }
+            Section("Months") {
+                if months.isEmpty {
+                    Text("No transactions yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(months, id: \.self) { monthStart in
+                    NavigationLink {
+                        MonthDetailView(month: monthStart)
+                    } label: {
+                        let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
+                        let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.amount }
+                        HStack {
+                            Text(Formatters.month.string(from: monthStart))
+                            Spacer()
+                            Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -124,15 +125,15 @@ struct DashboardView: View {
 
             Section("Categories") {
                 if summary.categoryTotals.isEmpty {
-                    ContentUnavailableView("No spending this month", systemImage: "chart.pie")
-                } else {
-                    ForEach(summary.categoryTotals) { categoryTotal in
-                        MetricRow(
-                            title: categoryTotal.categoryName,
-                            value: Formatters.currencyString(for: categoryTotal.amount),
-                            systemImage: "tag"
-                        )
-                    }
+                    Text("No spending this month")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(summary.categoryTotals) { categoryTotal in
+                    MetricRow(
+                        title: categoryTotal.categoryName,
+                        value: Formatters.currencyString(for: categoryTotal.amount),
+                        systemImage: "tag"
+                    )
                 }
             }
 

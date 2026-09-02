@@ -42,11 +42,21 @@ struct ReviewTransactionsView: View {
     }
 
     var body: some View {
-        List {
+        let dups = possibleDuplicates
+        return List {
             ocrResultsSection
 
-            if !possibleDuplicates.isEmpty {
-                duplicateSection
+            Section("Possible Duplicates") {
+                if dups.isEmpty {
+                    Text("None flagged.").foregroundStyle(.secondary)
+                }
+                ForEach(dups) { transaction in
+                    NavigationLink {
+                        TransactionDetailView(transaction: transaction)
+                    } label: {
+                        TransactionRowView(transaction: transaction)
+                    }
+                }
             }
         }
         .navigationTitle("Review")
@@ -68,25 +78,25 @@ struct ReviewTransactionsView: View {
     private var ocrResultsSection: some View {
         Section {
             if ocrReviewStore.drafts.isEmpty {
-                ContentUnavailableView("No OCR transactions", systemImage: "text.viewfinder")
-            } else {
-                ForEach($ocrReviewStore.drafts) { $draft in
-                    OCRTransactionDraftRow(
-                        draft: $draft,
-                        categories: categories,
-                        aiState: aiRowStates[draft.id],
-                        canAskAI: isAIConnected,
-                        onRemove: {
-                            ocrReviewStore.removeDraft(id: draft.id)
-                            aiRowStates[draft.id] = nil
-                        },
-                        onAskAI: { askAI(for: draft.id) },
-                        onAcceptSuggestion: { suggestion in
-                            acceptSuggestion(suggestion, for: draft.id)
-                        },
-                        onDismissAI: { aiRowStates[draft.id] = nil }
-                    )
-                }
+                Text("No OCR transactions. Import screenshots from the Import tab.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach($ocrReviewStore.drafts) { $draft in
+                OCRTransactionDraftRow(
+                    draft: $draft,
+                    categories: categories,
+                    aiState: aiRowStates[draft.id],
+                    canAskAI: isAIConnected,
+                    onRemove: {
+                        ocrReviewStore.removeDraft(id: draft.id)
+                        aiRowStates[draft.id] = nil
+                    },
+                    onAskAI: { askAI(for: draft.id) },
+                    onAcceptSuggestion: { suggestion in
+                        acceptSuggestion(suggestion, for: draft.id)
+                    },
+                    onDismissAI: { aiRowStates[draft.id] = nil }
+                )
             }
         } header: {
             HStack {
@@ -101,18 +111,6 @@ struct ReviewTransactionsView: View {
                 Text(saveMessage)
             } else if hasInvalidSelectedDrafts {
                 Text("Selected transactions need a merchant and valid amount before saving.")
-            }
-        }
-    }
-
-    private var duplicateSection: some View {
-        Section("Possible Duplicates") {
-            ForEach(possibleDuplicates) { transaction in
-                NavigationLink {
-                    TransactionDetailView(transaction: transaction)
-                } label: {
-                    TransactionRowView(transaction: transaction)
-                }
             }
         }
     }

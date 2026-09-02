@@ -46,15 +46,20 @@ private struct ToastHost: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .bottom) {
-                if let toast = center.current {
-                    ToastView(toast: toast)
-                        .padding(.bottom, 6)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .onTapGesture { center.dismiss() }
-                        .id(toast.id)
+                // Animate ONLY this container, never the wrapped app tree —
+                // animating the whole TabView on every toast fights with any
+                // List mutation happening at the same time.
+                ZStack {
+                    if let toast = center.current {
+                        ToastView(toast: toast)
+                            .padding(.bottom, 6)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .onTapGesture { center.dismiss() }
+                            .id(toast.id)
+                    }
                 }
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: center.current)
             }
-            .animation(.spring(response: 0.32, dampingFraction: 0.85), value: center.current)
     }
 }
 

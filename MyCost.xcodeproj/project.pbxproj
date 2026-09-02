@@ -56,6 +56,7 @@
 		00000000000000000000012F /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000030 /* ToastCenter.swift */; };
 		000000000000000000000130 /* ToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000031 /* ToastView.swift */; };
 		0000000000000000000009A4 /* MyCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009A3 /* MyCostTests.swift */; };
+		0000000000000000000009B4 /* MyCostUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009B3 /* MyCostUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -111,6 +112,8 @@
 		8A26197730479CE900C9C94A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0000000000000000000009A2 /* MyCostTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyCostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000009A3 /* MyCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyCostTests.swift; sourceTree = "<group>"; };
+		0000000000000000000009B2 /* MyCostUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyCostUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000000000000000000009B3 /* MyCostUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyCostUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +131,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0000000000000000000009B7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -136,6 +146,7 @@
 			children = (
 				000000000000000000000302 /* MyCost */,
 				0000000000000000000009A5 /* MyCostTests */,
+				0000000000000000000009B5 /* MyCostUITests */,
 				000000000000000000000303 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -157,6 +168,7 @@
 			children = (
 				000000000000000000000014 /* MyCost.app */,
 				0000000000000000000009A2 /* MyCostTests.xctest */,
+				0000000000000000000009B2 /* MyCostUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -167,6 +179,14 @@
 				0000000000000000000009A3 /* MyCostTests.swift */,
 			);
 			path = MyCostTests;
+			sourceTree = "<group>";
+		};
+		0000000000000000000009B5 /* MyCostUITests */ = {
+			isa = PBXGroup;
+			children = (
+				0000000000000000000009B3 /* MyCostUITests.swift */,
+			);
+			path = MyCostUITests;
 			sourceTree = "<group>";
 		};
 		000000000000000000000304 /* Models */ = {
@@ -355,6 +375,24 @@
 			productReference = 0000000000000000000009A2 /* MyCostTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		0000000000000000000009B1 /* MyCostUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0000000000000000000009BB /* Build configuration list for PBXNativeTarget "MyCostUITests" */;
+			buildPhases = (
+				0000000000000000000009B6 /* Sources */,
+				0000000000000000000009B7 /* Frameworks */,
+				0000000000000000000009B8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0000000000000000000009BA /* PBXTargetDependency */,
+			);
+			name = MyCostUITests;
+			productName = MyCostUITests;
+			productReference = 0000000000000000000009B2 /* MyCostUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -369,6 +407,10 @@
 						CreatedOnToolsVersion = 16.0;
 					};
 					0000000000000000000009A1 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 000000000000000000000401;
+					};
+					0000000000000000000009B1 = {
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = 000000000000000000000401;
 					};
@@ -389,6 +431,7 @@
 			targets = (
 				000000000000000000000401 /* MyCost */,
 				0000000000000000000009A1 /* MyCostTests */,
+				0000000000000000000009B1 /* MyCostUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -402,6 +445,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		0000000000000000000009A8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0000000000000000000009B8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -474,6 +524,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0000000000000000000009B6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000000000000000000009B4 /* MyCostUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -482,10 +540,22 @@
 			target = 000000000000000000000401 /* MyCost */;
 			targetProxy = 0000000000000000000009A9 /* PBXContainerItemProxy */;
 		};
+		0000000000000000000009BA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000401 /* MyCost */;
+			targetProxy = 0000000000000000000009B9 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin PBXContainerItemProxy section */
 		0000000000000000000009A9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000601 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000401;
+			remoteInfo = MyCost;
+		};
+		0000000000000000000009B9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 000000000000000000000601 /* Project object */;
 			proxyType = 1;
@@ -697,6 +767,40 @@
 			};
 			name = Release;
 		};
+		0000000000000000000009BC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.getsuzym.MyCostUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MyCost;
+			};
+			name = Debug;
+		};
+		0000000000000000000009BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.getsuzym.MyCostUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MyCost;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -723,6 +827,15 @@
 			buildConfigurations = (
 				0000000000000000000009AC /* Debug */,
 				0000000000000000000009AD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0000000000000000000009BB /* Build configuration list for PBXNativeTarget "MyCostUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0000000000000000000009BC /* Debug */,
+				0000000000000000000009BD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

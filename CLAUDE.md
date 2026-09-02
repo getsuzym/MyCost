@@ -31,7 +31,11 @@ If `xcode-select` points at the Command Line Tools, prefix commands with `DEVELO
 
 Two pre-existing tests (`testMultipleMonthsStaySeparated`, `testDuplicateMatcherTreatsSimilarMerchantsSameAmountAsMediumConfidence`) pass in isolation but fail in a full-suite run — a latent test-ordering/shared-state issue that predates the test target being wired up. Not caused by, and unrelated to, current feature work.
 
-`MyCostUITests/` (XCUITest) is still **not** a target — add a UI Test Bundle in Xcode to run it. UI tests launch the app with the `-ui-testing` argument, which makes `MyCostApp` use an in-memory `ModelContainer`. Views expose `accessibilityIdentifier`s in `screen.element` form (e.g. `review.saveApproved`, `transactionEditor.merchant`).
+`MyCostUITests` is a UI-test-bundle target (`-only-testing:MyCostUITests`). Tests launch with `-ui-testing`, which makes `MyCostApp` use an in-memory `ModelContainer` (default categories seeded on launch). Views expose `accessibilityIdentifier`s in `screen.element` form (`review.saveApproved`, `transactionEditor.merchant`, `dashboard.openMonth`, `monthDetail.addTransaction`, …). The app opens on Dashboard; History/Categories/Recurring are under the tab bar's "More" (7 tabs). The add-transaction UI tests exist specifically as a crash guard for the SwiftUI diff issue below.
+
+### Add/save must not restructure a `List` and animate the app at once
+
+`ContiguousArrayBuffer.swift:692` / `AppGraph.shared may only be set once!` on "adding a transaction" came from a `List` doing several structural changes in one `@Query`-driven update (a `Section` appearing, an `if/else` flipping `ContentUnavailableView` ↔ `ForEach`) **while** `.toastHost()` animated the whole `TabView` (a toast now fires on every save). Rules that keep it stable, applied to `DashboardView`, `MonthDetailView`, `ReviewTransactionsView`: never wrap the whole app in `.animation(_:value:)` — `ToastHost` animates only its overlay `ZStack`; don't gate a `Section` or swap `ForEach`↔`ContentUnavailableView` on data that changes on add — keep the `Section`/`ForEach` always present and show an empty-state `Text` as a sibling row; compute a recomputed summary/list **once** per `body` (`let x = x; return List{…}`) so its `ForEach` diffs against one snapshot; and every `Identifiable` used in a `ForEach` over a *recomputed* collection needs a value-derived `id` (see `CategorySpend.id`, `RecurringPaymentSuggestion.id`), never `let id = UUID()`.
 
 ### project.pbxproj is hand-maintained
 

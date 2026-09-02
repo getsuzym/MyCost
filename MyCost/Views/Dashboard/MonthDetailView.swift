@@ -43,31 +43,27 @@ struct MonthDetailView: View {
 
             Section {
                 if monthTransactions.isEmpty {
-                    ContentUnavailableView(
-                        "No transactions",
-                        systemImage: "calendar",
-                        description: Text("Add one with the + button.")
-                    )
-                } else {
-                    ForEach(monthTransactions) { transaction in
-                        NavigationLink {
-                            TransactionDetailView(transaction: transaction)
+                    Text("No transactions this month. Add one with +.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(monthTransactions) { transaction in
+                    NavigationLink {
+                        TransactionDetailView(transaction: transaction)
+                    } label: {
+                        MonthTransactionRow(transaction: transaction)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            transactionPendingDeletion = transaction
                         } label: {
-                            MonthTransactionRow(transaction: transaction)
+                            Label("Delete", systemImage: "trash")
                         }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                transactionPendingDeletion = transaction
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            Button {
-                                editingTransaction = transaction
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
-                            }
-                            .tint(.indigo)
+                        Button {
+                            editingTransaction = transaction
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
                         }
+                        .tint(.indigo)
                     }
                 }
             } header: {
