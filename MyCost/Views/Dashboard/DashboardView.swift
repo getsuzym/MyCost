@@ -10,12 +10,19 @@ struct DashboardView: View {
     @State private var monthAnchor = Date()
 
     private let analytics = SpendingAnalytics()
+    private let monthly = MonthlyTransactionsService()
+
     private var summary: MonthlySpendingSummary {
         analytics.monthlySummary(for: monthAnchor, transactions: transactions, recurringPayments: recurringPayments)
     }
 
     private var isCurrentMonth: Bool {
         Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
+    }
+
+    /// Month-start dates that actually have transactions, newest first.
+    private var monthsWithTransactions: [Date] {
+        monthly.monthsRepresented(in: transactions)
     }
 
     var body: some View {
@@ -52,10 +59,37 @@ struct DashboardView: View {
                             .font(.caption)
                             .buttonStyle(.borderless)
                     }
+
+                    NavigationLink {
+                        MonthDetailView(month: monthAnchor)
+                    } label: {
+                        Label("Open \(Formatters.month.string(from: summary.month))", systemImage: "list.bullet.rectangle")
+                            .font(.callout)
+                    }
+                    .accessibilityIdentifier("dashboard.openMonth")
                 }
                 .padding(.vertical, 8)
             } header: {
                 Text("Monthly Spending")
+            }
+
+            if !monthsWithTransactions.isEmpty {
+                Section("Months") {
+                    ForEach(monthsWithTransactions, id: \.self) { monthStart in
+                        NavigationLink {
+                            MonthDetailView(month: monthStart)
+                        } label: {
+                            let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
+                            let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.amount }
+                            HStack {
+                                Text(Formatters.month.string(from: monthStart))
+                                Spacer()
+                                Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
 
             Section("Status") {

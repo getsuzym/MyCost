@@ -15,6 +15,9 @@ struct TransactionEditorView: View {
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
 
     let mode: TransactionEditorMode
+    /// For `.add`: the date the new transaction should start on (e.g. the month
+    /// the user opened). Ignored for `.edit`.
+    var initialDate: Date?
 
     @State private var accountName = "Default"
     @State private var merchantName = ""
@@ -183,7 +186,10 @@ struct TransactionEditorView: View {
     }
 
     private func loadInitialValues() {
-        guard case .edit(let transaction) = mode else { return }
+        guard case .edit(let transaction) = mode else {
+            if let initialDate { transactionDate = initialDate }
+            return
+        }
 
         accountName = transaction.accountName
         merchantName = transaction.merchantName

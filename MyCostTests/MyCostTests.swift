@@ -1171,6 +1171,204 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(outcome.persistedTransactionCount, try context.fetchCount(FetchDescriptor<Transaction>()))
     }
 
+    // MARK: - Month detail, month grouping & safe indexing
+
+    @discardableResult
+    private func insertTransaction(
+        _ merchant: String,
+        amount: Decimal,
+        on day: Date,
+        status: TransactionStatus = .posted,
+        excluded: Bool = false,
+        recurring: Bool = false,
+        category: MyCost.Category? = nil
+    ) -> Transaction {
+        let transaction = Transaction(
+            merchantName: merchant, amount: amount, transactionDate: day,
+            status: status, isExcluded: excluded, isRecurring: recurring, category: category
+        )
+        context.insert(transaction)
+        return transaction
+    }
+
+    private func allTransactions() throws -> [Transaction] {
+        try context.fetch(FetchDescriptor<Transaction>())
+    }
+
+    func testSafeSubscriptAndElementsAtNeverGoOutOfBounds() {
+        XCTAssertNil([Int]()[safe: 0])
+        XCTAssertNil([1, 2, 3][safe: 5])
+        XCTAssertNil([1, 2, 3][safe: -1])
+        XCTAssertEqual([1, 2, 3][safe: 1], 2)
+        XCTAssertEqual([1][safe: 0], 1)
+
+        XCTAssertEqual([10, 20, 30].elements(at: IndexSet([0, 2])), [10, 30])
+        XCTAssertEqual([10, 20].elements(at: IndexSet([0, 5, 1])), [10, 20]) // 5 skipped
+        XCTAssertEqual([Int]().elements(at: IndexSet([0, 1])), [])
+    }
+
+    func testMonthlyServiceReturnsEveryTransactionInMonthNewestFirst() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        insertTransaction("Posted", amount: 50, on: date(2026, 8, 5), status: .posted, category: dining)
+        insertTransaction("Pending", amount: 20, on: date(2026, 8, 20), status: .pending)
+        insertTransaction("Excluded", amount: 400, on: date(2026, 8, 12), status: .posted, excluded: true)
+        insertTransaction("Recurring", amount: 12, on: date(2026, 8, 2), recurring: true)
+        insertTransaction("Uncategorized", amount: 8, on: date(2026, 8, 25))
+        insertTransaction("Next Month", amount: 99, on: date(2026, 9, 1))
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(
+            inMonthContaining: date(2026, 8, 15), from: try allTransactions()
+        )
+
+        XCTAssertEqual(month.map(\.merchantName), ["Uncategorized", "Pending", "Excluded", "Posted", "Recurring"])
+        XCTAssertTrue(month.contains { $0.isExcluded })
+        XCTAssertFalse(month.contains { $0.merchantName == "Next Month" })
+    }
+
+    func testMonthlyServiceEmptyAndSingleTransactionMonths() throws {
+        XCTAssertEqual(MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 3, 1), from: []).count, 0)
+        XCTAssertEqual(MonthlyTransactionsService().monthsRepresented(in: []), [])
+
+        insertTransaction("Only One", amount: 10, on: date(2026, 8, 10))
+        try context.save()
+        let all = try allTransactions()
+        XCTAssertEqual(MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 30), from: all).count, 1)
+        XCTAssertEqual(MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 3, 1), from: all).count, 0)
+        XCTAssertEqual(MonthlyTransactionsService().monthsRepresented(in: all), [date(2026, 8, 1)])
+    }
+
+    func testMonthsRepresentedIsDeduplicatedAndNewestFirst() throws {
+        insertTransaction("A", amount: 1, on: date(2026, 8, 3))
+        insertTransaction("B", amount: 1, on: date(2026, 8, 19))
+        insertTransaction("C", amount: 1, on: date(2026, 6, 10))
+        insertTransaction("D", amount: 1, on: date(2026, 9, 5))
+        insertTransaction("E", amount: 1, on: date(2026, 9, 22))
+        try context.save()
+
+        XCTAssertEqual(
+            MonthlyTransactionsService().monthsRepresented(in: try allTransactions()),
+            [date(2026, 9, 1), date(2026, 8, 1), date(2026, 6, 1)]
+        )
+    }
+
+    func testAddingTransactionToMonthUpdatesListAndDashboardTotal() throws {
+        insertTransaction("Existing", amount: 40, on: date(2026, 8, 4))
+        try context.save()
+
+        insertTransaction("Added", amount: 60, on: date(2026, 8, 18))
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 15), from: try allTransactions())
+        XCTAssertEqual(month.count, 2)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month).total, 100)
+    }
+
+    func testEditingMerchantCategoryAndAmountReflectsImmediately() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let transaction = insertTransaction("Old Name", amount: 10, on: date(2026, 8, 8), category: dining)
+        try context.save()
+
+        transaction.merchantName = "New Name"
+        transaction.amount = 25
+        transaction.category = groceries
+        transaction.updatedAt = .now
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions())
+        XCTAssertEqual(month.first?.merchantName, "New Name")
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month)
+        XCTAssertEqual(summary.total, 25)
+        XCTAssertEqual(summary.categoryTotals.first?.categoryName, "Groceries")
+    }
+
+    func testChangingDateMovesTransactionOutOfOldMonthIntoNewMonth() throws {
+        let transaction = insertTransaction("Movable", amount: 30, on: date(2026, 8, 10))
+        try context.save()
+        let service = MonthlyTransactionsService()
+
+        XCTAssertEqual(service.transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions()).count, 1)
+        XCTAssertEqual(service.transactions(inMonthContaining: date(2026, 9, 1), from: try allTransactions()).count, 0)
+
+        transaction.transactionDate = date(2026, 9, 5)
+        try context.save()
+
+        XCTAssertEqual(service.transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions()).count, 0)
+        XCTAssertEqual(service.transactions(inMonthContaining: date(2026, 9, 1), from: try allTransactions()).count, 1)
+        XCTAssertEqual(service.monthsRepresented(in: try allTransactions()), [date(2026, 9, 1)])
+    }
+
+    func testDeletingTransactionRemovesItFromMonthAndDashboardTotal() throws {
+        let keep = insertTransaction("Keep", amount: 60, on: date(2026, 8, 6))
+        let drop = insertTransaction("Drop", amount: 40, on: date(2026, 8, 7))
+        try context.save()
+
+        context.delete(drop)
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions())
+        XCTAssertEqual(month.map(\.merchantName), ["Keep"])
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month).total, 60)
+        XCTAssertEqual(keep.merchantName, "Keep")
+    }
+
+    func testDeletingFinalTransactionLeavesMonthEmptyWithoutCrash() throws {
+        let only = insertTransaction("Last One", amount: 20, on: date(2026, 8, 14))
+        try context.save()
+
+        context.delete(only)
+        try context.save()
+
+        let service = MonthlyTransactionsService()
+        let month = service.transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions())
+        XCTAssertTrue(month.isEmpty)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month).total, 0)
+        XCTAssertFalse(service.monthsRepresented(in: try allTransactions()).contains(date(2026, 8, 1)))
+    }
+
+    func testMonthSummaryExcludesExcludedFromTotalsButKeepsThemInTheList() throws {
+        insertTransaction("Posted", amount: 50, on: date(2026, 8, 3), status: .posted)
+        insertTransaction("Pending", amount: 20, on: date(2026, 8, 4), status: .pending)
+        insertTransaction("Excluded Big", amount: 400, on: date(2026, 8, 5), status: .posted, excluded: true)
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions())
+        XCTAssertEqual(month.count, 3, "excluded transaction is still in the list")
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month)
+        XCTAssertEqual(summary.total, 70)
+        XCTAssertEqual(summary.postedTotal, 50)
+        XCTAssertEqual(summary.pendingTotal, 20)
+    }
+
+    func testRefundLowersTheMonthTotal() throws {
+        insertTransaction("Purchase", amount: 100, on: date(2026, 8, 2))
+        insertTransaction("Refund", amount: -30, on: date(2026, 8, 9))
+        try context.save()
+
+        let month = MonthlyTransactionsService().transactions(inMonthContaining: date(2026, 8, 1), from: try allTransactions())
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: month).total, 70)
+    }
+
+    func testSwitchingQuicklyBetweenMonthsReturnsIndependentSets() throws {
+        for month in 5...9 {
+            insertTransaction("M\(month)a", amount: 10, on: date(2026, month, 3))
+            insertTransaction("M\(month)b", amount: 10, on: date(2026, month, 20))
+        }
+        try context.save()
+        let service = MonthlyTransactionsService()
+        let all = try allTransactions()
+
+        for _ in 0..<3 {
+            for month in [9, 5, 7, 6, 8, 9, 5] {
+                let set = service.transactions(inMonthContaining: date(2026, month, 15), from: all)
+                XCTAssertEqual(set.count, 2)
+                XCTAssertTrue(set.allSatisfy { Calendar.current.component(.month, from: $0.transactionDate) == month })
+            }
+        }
+    }
+
     // MARK: - Spatial transaction grouping
 
     /// Build a normalized OCR observation (top-left origin, y down).

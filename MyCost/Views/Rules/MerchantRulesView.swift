@@ -65,8 +65,8 @@ struct MerchantRulesView: View {
     }
 
     private func deleteRules(at offsets: IndexSet) {
-        for offset in offsets {
-            modelContext.delete(merchantRules[offset])
+        for rule in merchantRules.elements(at: offsets) {
+            modelContext.delete(rule)
         }
         try? modelContext.save()
     }

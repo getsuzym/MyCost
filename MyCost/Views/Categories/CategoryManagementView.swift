@@ -137,6 +137,8 @@ struct CategoryManagementView: View {
 
     private func move(from offsets: IndexSet, to destination: Int) {
         var ordered = categories
+        // Guard against stale offsets if the @Query changed under the gesture.
+        guard offsets.allSatisfy({ ordered.indices.contains($0) }), (0...ordered.count).contains(destination) else { return }
         ordered.move(fromOffsets: offsets, toOffset: destination)
         service.reorder(ordered, modelContext: modelContext)
     }
