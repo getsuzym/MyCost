@@ -1,7 +1,6 @@
 import Foundation
 
 struct RecurringPaymentSuggestion: Identifiable, Equatable {
-    let id = UUID()
     let accountName: String
     let merchantName: String
     let expectedAmount: Decimal
@@ -11,6 +10,10 @@ struct RecurringPaymentSuggestion: Identifiable, Equatable {
     let confidence: Double
     let transactionIDs: [UUID]
     let reason: String
+
+    /// Stable identity from the account+merchant grouping key — not a random
+    /// UUID that changes every time `suggestions` is recomputed.
+    var id: String { "\(accountName)|\(merchantName)" }
 }
 
 struct RecurringPaymentSuggestionService {

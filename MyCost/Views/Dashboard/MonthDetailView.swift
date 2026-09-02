@@ -35,9 +35,10 @@ struct MonthDetailView: View {
     }
 
     var body: some View {
-        List {
+        let summary = summary
+        return List {
             Section {
-                summaryHeader
+                summaryHeader(summary)
             }
 
             Section {
@@ -129,7 +130,7 @@ struct MonthDetailView: View {
     }
 
     @ViewBuilder
-    private var summaryHeader: some View {
+    private func summaryHeader(_ summary: MonthlySpendingSummary) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(Formatters.currencyString(for: summary.total))
                 .font(.title2.bold())

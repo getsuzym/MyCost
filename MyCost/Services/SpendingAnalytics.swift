@@ -1,9 +1,13 @@
 import Foundation
 
-struct CategorySpend: Identifiable {
-    let id = UUID()
+struct CategorySpend: Identifiable, Equatable {
     let categoryName: String
     let amount: Decimal
+
+    /// Stable identity: the category name is unique within a summary (it's the
+    /// grouping key). A random UUID here made `ForEach` regenerate every row on
+    /// every recompute and crashed `List`'s animated diff on add/delete.
+    var id: String { categoryName }
 }
 
 struct MonthlySpendingSummary {

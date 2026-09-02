@@ -26,7 +26,11 @@ struct DashboardView: View {
     }
 
     var body: some View {
-        List {
+        // Compute once per render — `summary` builds fresh CategorySpend values,
+        // and the ForEach over them needs a single, stable set to diff against.
+        let summary = summary
+        let months = monthsWithTransactions
+        return List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -73,9 +77,9 @@ struct DashboardView: View {
                 Text("Monthly Spending")
             }
 
-            if !monthsWithTransactions.isEmpty {
+            if !months.isEmpty {
                 Section("Months") {
-                    ForEach(monthsWithTransactions, id: \.self) { monthStart in
+                    ForEach(months, id: \.self) { monthStart in
                         NavigationLink {
                             MonthDetailView(month: monthStart)
                         } label: {

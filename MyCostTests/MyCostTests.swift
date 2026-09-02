@@ -1171,6 +1171,44 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(outcome.persistedTransactionCount, try context.fetchCount(FetchDescriptor<Transaction>()))
     }
 
+    // MARK: - Stable ForEach identity (add/delete diff-crash regression)
+
+    func testCategorySpendIdentityIsStableAcrossRecomputes() {
+        let dining = Category(name: "Dining", colorHex: "#000000", symbolName: "fork.knife")
+        let groceries = Category(name: "Groceries", colorHex: "#000000", symbolName: "cart")
+        let base = [
+            Transaction(merchantName: "Cafe", amount: 10, transactionDate: date(2026, 8, 2), category: dining),
+            Transaction(merchantName: "Market", amount: 20, transactionDate: date(2026, 8, 3), category: groceries)
+        ]
+
+        let first = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: base)
+        // Same data, recomputed — ids must match (was random UUID before).
+        let again = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: base)
+        XCTAssertEqual(first.categoryTotals.map(\.id), again.categoryTotals.map(\.id))
+        XCTAssertEqual(Set(first.categoryTotals.map(\.id)), ["Dining", "Groceries"])
+
+        // Adding a transaction only changes the affected row's amount, and the
+        // shared row keeps its identity — nothing "moves" from SwiftUI's view.
+        let afterAdd = SpendingAnalytics().monthlySummary(
+            for: date(2026, 8, 15),
+            transactions: base + [Transaction(merchantName: "Bistro", amount: 5, transactionDate: date(2026, 8, 9), category: dining)]
+        )
+        XCTAssertEqual(afterAdd.categoryTotals.first { $0.id == "Dining" }?.amount, 15)
+        XCTAssertTrue(Set(first.categoryTotals.map(\.id)).isSubset(of: Set(afterAdd.categoryTotals.map(\.id))))
+    }
+
+    func testRecurringSuggestionIdentityIsStableAcrossRecomputes() {
+        let service = RecurringPaymentSuggestionService()
+        let transactions = (1...4).map { month in
+            recurringCandidate("Cloud Storage", amount: 9.99, date: date(2026, month, 5))
+        }
+
+        let a = service.suggestions(from: transactions)
+        let b = service.suggestions(from: transactions)
+        XCTAssertEqual(a.map(\.id), b.map(\.id))
+        XCTAssertEqual(a.first?.id, "Default|Cloud Storage")
+    }
+
     // MARK: - Month detail, month grouping & safe indexing
 
     @discardableResult
