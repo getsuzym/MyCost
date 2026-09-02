@@ -20,6 +20,9 @@ struct ScreenshotImportResult {
     /// Whether `transactionCandidates` came from spatial grouping (`true`) or
     /// the flat-text fallback (`false`).
     let usedSpatialGrouping: Bool
+    /// The date used for year inference — pass to `replaceCandidates` so drafts
+    /// resolve dates the same way.
+    let referenceDate: Date
 }
 
 enum ScreenshotImportError: LocalizedError, Equatable {
@@ -39,19 +42,16 @@ enum ScreenshotImportError: LocalizedError, Equatable {
 struct ScreenshotImportService {
     private let ocrService: OCRServicing
     private let regionDetector: TransactionRegionDetector
-    private let grouper: TransactionGrouper
-    private let transactionParser: TransactionCandidateParser
+    private let now: () -> Date
 
     init(
         ocrService: OCRServicing = VisionOCRService(),
         regionDetector: TransactionRegionDetector = TransactionRegionDetector(),
-        grouper: TransactionGrouper = TransactionGrouper(),
-        transactionParser: TransactionCandidateParser = TransactionCandidateParser()
+        now: @escaping () -> Date = Date.init
     ) {
         self.ocrService = ocrService
         self.regionDetector = regionDetector
-        self.grouper = grouper
-        self.transactionParser = transactionParser
+        self.now = now
     }
 
     func processScreenshot(_ image: UIImage) async throws -> ScreenshotImportResult {
@@ -60,6 +60,13 @@ struct ScreenshotImportService {
             guard !textBlocks.isEmpty else {
                 throw ScreenshotImportError.noRecognizedText
             }
+
+            // One reference date for the whole extraction so a screenshot date
+            // with no year ("Aug 28") is consistently placed in the current
+            // statement year everywhere it's parsed.
+            let referenceDate = now()
+            let grouper = TransactionGrouper(referenceDate: referenceDate)
+            let flatParser = TransactionCandidateParser(referenceDate: referenceDate)
 
             // Primary path: use the OCR bounding boxes to reconstruct the
             // statement's visual rows and group each transaction spatially.
@@ -72,7 +79,7 @@ struct ScreenshotImportService {
             // Fallback: if geometry told us nothing (degenerate boxes, or a
             // layout the grouper couldn't split), parse the flat text.
             if candidates.isEmpty {
-                candidates = transactionParser.parse(lines: textBlocks.map(\.text))
+                candidates = flatParser.parse(lines: textBlocks.map(\.text))
                 usedSpatialGrouping = false
             }
 
@@ -82,7 +89,8 @@ struct ScreenshotImportService {
                 observations: observations,
                 regions: regions,
                 transactionCandidates: candidates,
-                usedSpatialGrouping: usedSpatialGrouping
+                usedSpatialGrouping: usedSpatialGrouping,
+                referenceDate: referenceDate
             )
         } catch let error as ScreenshotImportError {
             throw error

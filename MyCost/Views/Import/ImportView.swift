@@ -122,7 +122,11 @@ struct ImportView: View {
                     recognizedTextBlocks = result.recognizedTextBlocks
                     lastObservations = result.observations
                     lastRegions = result.regions
-                    ocrReviewStore.replaceCandidates(result.transactionCandidates, merchantRules: merchantRules)
+                    ocrReviewStore.replaceCandidates(
+                        result.transactionCandidates,
+                        merchantRules: merchantRules,
+                        referenceDate: result.referenceDate
+                    )
                     let method = result.usedSpatialGrouping ? "grouped \(result.regions.count) regions" : "flat-text fallback"
                     statusMessage = "Recognized \(result.recognizedTextBlocks.count) text blocks; \(method); \(result.transactionCandidates.count) transaction candidates. Transactions were not saved."
                     isProcessing = false

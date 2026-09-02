@@ -967,6 +967,210 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.categoryTotals.first?.amount, 100)
     }
 
+    // MARK: - OCR import → SwiftData persistence → History / Dashboard
+
+    private func draft(
+        merchant: String,
+        amount: Decimal,
+        on day: Date,
+        status: TransactionCandidateStatus? = .posted,
+        selected: Bool = true,
+        categoryID: UUID? = nil
+    ) -> OCRTransactionDraft {
+        let candidate = TransactionCandidate(
+            detectedDate: day,
+            rawMerchantDescription: merchant,
+            amount: amount,
+            status: status,
+            originalOCRText: "\(merchant) \(amount)",
+            sourceText: "\(merchant) \(amount)",
+            confidence: TransactionCandidateFieldConfidences(date: 0.95, merchantDescription: 0.9, amount: 0.95, status: 0.95),
+            validationFlags: []
+        )
+        var made = OCRTransactionDraft(candidate: candidate, referenceDate: date(2026, 8, 31))
+        made.isSelected = selected
+        made.selectedCategoryID = categoryID
+        return made
+    }
+
+    /// Replicates TransactionHistoryView's @Query.
+    private func historyTransactions() throws -> [Transaction] {
+        try context.fetch(FetchDescriptor<Transaction>(sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]))
+    }
+
+    func testImportingThreeSelectedDraftsPersistsExactlyThreeAndTheyReachHistoryAndDashboard() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let dining = makeCategory("Dining", sortOrder: 1)
+        try context.save()
+
+        let drafts = [
+            draft(merchant: "Corner Market", amount: 40, on: date(2026, 8, 3), categoryID: groceries.id),
+            draft(merchant: "Cafe Roma", amount: 15, on: date(2026, 8, 10), categoryID: dining.id),
+            draft(merchant: "Bistro", amount: 25, on: date(2026, 8, 12), categoryID: dining.id)
+        ]
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            drafts,
+            categories: try fetchCategories(),
+            existingTransactions: [],
+            existingRules: [],
+            modelContext: context
+        )
+
+        XCTAssertNil(outcome.saveError)
+        XCTAssertEqual(outcome.insertedTransactionIDs.count, 3)
+        XCTAssertEqual(outcome.persistedTransactionCount, 3)
+
+        // Actually in SwiftData, in the shared context.
+        let history = try historyTransactions()
+        XCTAssertEqual(history.count, 3)
+        XCTAssertEqual(Set(history.map(\.merchantName)), ["Corner Market", "Cafe Roma", "Bistro"])
+        XCTAssertFalse(history.contains { $0.isExcluded })
+        XCTAssertTrue(history.allSatisfy { $0.duplicateState == .unique })
+
+        // Dashboard aggregation for the month those transactions fall in.
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
+        XCTAssertEqual(summary.total, 80)
+        XCTAssertEqual(summary.postedTotal, 80)
+        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Dining" }?.amount, 40)
+        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Groceries" }?.amount, 40)
+    }
+
+    func testPartialSelectionImportsOnlySelectedDrafts() throws {
+        let drafts = [
+            draft(merchant: "Keep One", amount: 10, on: date(2026, 8, 5)),
+            draft(merchant: "Skip Me", amount: 99, on: date(2026, 8, 6), selected: false),
+            draft(merchant: "Keep Two", amount: 20, on: date(2026, 8, 7))
+        ]
+        let selected = drafts.filter(\.isSelected)
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            selected, categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+
+        XCTAssertEqual(outcome.persistedTransactionCount, 2)
+        XCTAssertEqual(Set(try historyTransactions().map(\.merchantName)), ["Keep One", "Keep Two"])
+    }
+
+    func testPendingDraftImportsAsPendingAndCountsInMonthlyTotal() throws {
+        let outcome = OCRTransactionImportService().importDrafts(
+            [draft(merchant: "Pending Shop", amount: 30, on: date(2026, 8, 9), status: .pending)],
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+
+        let history = try historyTransactions()
+        XCTAssertEqual(history.first?.status, .pending)
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
+        XCTAssertEqual(summary.total, 30)
+        XCTAssertEqual(summary.pendingTotal, 30)
+        XCTAssertEqual(summary.postedTotal, 0)
+    }
+
+    func testUncategorizedDraftImportsWithNilCategoryAndShowsInUncategorizedTotal() throws {
+        let outcome = OCRTransactionImportService().importDrafts(
+            [draft(merchant: "Mystery Vendor", amount: 12, on: date(2026, 8, 4), categoryID: nil)],
+            categories: try fetchCategories(), existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+
+        let history = try historyTransactions()
+        XCTAssertNil(history.first?.category)
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
+        XCTAssertEqual(summary.categoryTotals.first?.categoryName, "Uncategorized")
+        XCTAssertEqual(summary.categoryTotals.first?.amount, 12)
+    }
+
+    func testImportedDateWithoutYearIsInferredToReferenceYearAndCountsInThatMonthOnly() throws {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        let candidate = try XCTUnwrap(parser.parse(ocrText: "8/28 CORNER MARKET $21.45 Pending").first)
+        XCTAssertTrue(candidate.validationFlags.contains(.inferredYear))
+
+        var reviewDraft = OCRTransactionDraft(candidate: candidate, referenceDate: date(2026, 8, 31))
+        // The inferred date is exposed for review.
+        XCTAssertEqual(reviewDraft.transactionDate, date(2026, 8, 28))
+        XCTAssertTrue(reviewDraft.isUncertain(.date))
+        reviewDraft.isSelected = true
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            [reviewDraft], categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+
+        let history = try historyTransactions()
+        XCTAssertEqual(history.first?.transactionDate, date(2026, 8, 28))
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history).total, 21.45)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 9, 15), transactions: history).total, 0)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2025, 8, 15), transactions: history).total, 0)
+    }
+
+    func testMediumConfidenceDuplicateIsStillSavedNotSilentlyBlocked() throws {
+        let existing = Transaction(
+            merchantName: "Corner Market", originalDescription: "Corner Market",
+            amount: 21.45, transactionDate: date(2026, 8, 24), status: .pending
+        )
+        context.insert(existing)
+        try context.save()
+
+        var incoming = draft(merchant: "Corner Market", amount: 21.45, on: date(2026, 8, 26), status: .posted)
+        var wrapped = [incoming]
+        let scan = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &wrapped,
+            existingTransactions: [DuplicateTransactionSnapshot(transaction: existing)]
+        )
+        incoming = wrapped[0]
+        XCTAssertEqual(scan.mediumMatchCount, 1)
+        XCTAssertTrue(incoming.isSelected, "medium duplicates must not be deselected")
+        XCTAssertNotNil(incoming.duplicateSummary)
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            [incoming], categories: [], existingTransactions: [existing], existingRules: [], modelContext: context
+        )
+
+        XCTAssertNil(outcome.saveError)
+        XCTAssertEqual(outcome.persistedTransactionCount, 2, "the possible duplicate is still saved")
+        let saved = try historyTransactions().first { $0.transactionDate == date(2026, 8, 26) }
+        XCTAssertEqual(saved?.duplicateState, .possibleDuplicate)
+    }
+
+    func testHighConfidenceDuplicateDraftIsDeselectedAndExcludedFromImport() throws {
+        let existing = Transaction(
+            merchantName: "Corner Market", originalDescription: "Corner Market 21.45",
+            amount: 21.45, transactionDate: date(2026, 8, 24), status: .posted
+        )
+        context.insert(existing)
+        try context.save()
+
+        var wrapped = [draft(merchant: "Corner Market", amount: 21.45, on: date(2026, 8, 24), status: .posted)]
+        wrapped[0].amountText = "21.45"
+        let scan = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &wrapped,
+            existingTransactions: [DuplicateTransactionSnapshot(transaction: existing)]
+        )
+
+        XCTAssertEqual(scan.blockedCount, 1)
+        XCTAssertFalse(wrapped[0].isSelected)
+
+        let stillSelected = wrapped.filter(\.isSelected)
+        let outcome = OCRTransactionImportService().importDrafts(
+            stillSelected, categories: [], existingTransactions: [existing], existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.importedCount, 0)
+        XCTAssertEqual(outcome.persistedTransactionCount, 1)
+    }
+
+    func testImportServiceVerifiesPersistenceWithAPostSaveFetch() throws {
+        let outcome = OCRTransactionImportService().importDrafts(
+            [draft(merchant: "A", amount: 1, on: date(2026, 8, 1)),
+             draft(merchant: "B", amount: 2, on: date(2026, 8, 2))],
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertTrue(outcome.didPersist)
+        XCTAssertEqual(outcome.persistedTransactionCount, try context.fetchCount(FetchDescriptor<Transaction>()))
+    }
+
     // MARK: - Spatial transaction grouping
 
     /// Build a normalized OCR observation (top-left origin, y down).

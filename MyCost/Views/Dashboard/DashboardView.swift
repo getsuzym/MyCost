@@ -5,23 +5,53 @@ struct DashboardView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
 
+    /// Which month the dashboard is showing. Starts at the current month; the
+    /// user can step back to see an imported historical statement.
+    @State private var monthAnchor = Date()
+
     private let analytics = SpendingAnalytics()
     private var summary: MonthlySpendingSummary {
-        analytics.monthlySummary(for: .now, transactions: transactions, recurringPayments: recurringPayments)
+        analytics.monthlySummary(for: monthAnchor, transactions: transactions, recurringPayments: recurringPayments)
+    }
+
+    private var isCurrentMonth: Bool {
+        Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
     }
 
     var body: some View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(Formatters.month.string(from: summary.month))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button {
+                            stepMonth(-1)
+                        } label: { Image(systemName: "chevron.left") }
+                            .accessibilityIdentifier("dashboard.previousMonth")
+
+                        Text(Formatters.month.string(from: summary.month))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .contentTransition(.numericText())
+
+                        Button {
+                            stepMonth(1)
+                        } label: { Image(systemName: "chevron.right") }
+                            .disabled(isCurrentMonth)
+                            .accessibilityIdentifier("dashboard.nextMonth")
+                    }
+                    .buttonStyle(.borderless)
 
                     Text(Formatters.currencyString(for: summary.total))
                         .font(.largeTitle.bold())
                         .contentTransition(.numericText())
                         .accessibilityIdentifier("dashboard.monthlyTotal")
+
+                    if !isCurrentMonth {
+                        Button("Back to this month") { monthAnchor = Date() }
+                            .font(.caption)
+                            .buttonStyle(.borderless)
+                    }
                 }
                 .padding(.vertical, 8)
             } header: {
@@ -82,6 +112,12 @@ struct DashboardView: View {
             }
         }
         .navigationTitle("Dashboard")
+    }
+
+    private func stepMonth(_ delta: Int) {
+        guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
+        // Never step past the current month.
+        monthAnchor = moved > Date() ? Date() : moved
     }
 }
 

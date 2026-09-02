@@ -19,9 +19,10 @@ struct ReviewTransactionsView: View {
     @Query private var aiConnections: [AIProviderConnection]
 
     @State private var saveMessage: String?
+    @State private var importError: String?
     @State private var aiRowStates: [UUID: AICategorizationRowState] = [:]
-    private let importCoordinator = OCRTransactionImportCoordinator()
     private let merchantRuleService = MerchantRuleService()
+    private let importService = OCRTransactionImportService()
     private let aiProviderService = AIProviderService()
 
     private var isAIConnected: Bool {
@@ -55,6 +56,11 @@ struct ReviewTransactionsView: View {
                     .disabled(ocrReviewStore.importableSelectedCount == 0 || hasInvalidSelectedDrafts)
                     .accessibilityIdentifier("review.saveApproved")
             }
+        }
+        .alert("Import failed", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "")
         }
     }
 
@@ -112,85 +118,46 @@ struct ReviewTransactionsView: View {
     }
 
     private func saveApprovedTransactions() {
-        let draftsToImport = ocrReviewStore.drafts.filter { $0.isSelected && $0.canImport }
-        guard !draftsToImport.isEmpty else { return }
+        guard !ocrReviewStore.drafts.filter({ $0.isSelected && $0.canImport }).isEmpty else { return }
         saveMessage = nil
+        importError = nil
 
-        let duplicateScan = ocrReviewStore.flagDuplicates(
-            existingTransactions: transactions.map(DuplicateTransactionSnapshot.init(transaction:)),
-            coordinator: importCoordinator
+        // Flag duplicates first: high-confidence ones deselect their draft;
+        // medium "possible duplicates" only get a note and are still saved
+        // (flagged) — they never silently block the import.
+        let scan = ocrReviewStore.flagDuplicates(
+            existingTransactions: transactions.map(DuplicateTransactionSnapshot.init(transaction:))
         )
-        if duplicateScan.needsUserDecision {
-            saveMessage = duplicateScan.message
+
+        let draftsToImport = ocrReviewStore.drafts.filter { $0.isSelected && $0.canImport }
+        guard !draftsToImport.isEmpty else {
+            saveMessage = "All selected transactions were high-confidence duplicates and were skipped."
             return
         }
 
-        saveDrafts(draftsToImport)
-    }
-
-    private func saveDrafts(_ draftsToImport: [OCRTransactionDraft]) {
-        for draft in draftsToImport {
-            guard let amount = draft.parsedAmount else { continue }
-            let selectedCategory = categories.first { $0.id == draft.selectedCategoryID }
-
-            if draft.duplicateSummary != nil, draft.duplicateDecision == .merge, let duplicateMatchID = draft.duplicateMatchID {
-                merge(draft: draft, amount: amount, intoTransactionID: duplicateMatchID, category: selectedCategory)
-                rememberMerchantRuleIfNeeded(for: draft, category: selectedCategory)
-                continue
-            }
-
-            let transaction = Transaction(
-                accountName: draft.trimmedAccountName,
-                merchantName: draft.trimmedMerchantName,
-                originalDescription: draft.sourceText,
-                amount: amount,
-                transactionDate: draft.transactionDate,
-                status: draft.status,
-                duplicateState: draft.duplicateSummary != nil && draft.duplicateDecision == .review ? .possibleDuplicate : .unique,
-                category: selectedCategory
-            )
-            modelContext.insert(transaction)
-            rememberMerchantRuleIfNeeded(for: draft, category: selectedCategory)
-        }
-
-        do {
-            try modelContext.save()
-            ocrReviewStore.removeDrafts(ids: Set(draftsToImport.map(\.id)))
-            saveMessage = "Saved \(draftsToImport.count) transaction\(draftsToImport.count == 1 ? "" : "s")."
-        } catch {
-            saveMessage = "Save failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func merge(draft: OCRTransactionDraft, amount: Decimal, intoTransactionID transactionID: UUID, category: Category?) {
-        guard let transaction = transactions.first(where: { $0.id == transactionID }) else { return }
-        transaction.accountName = draft.trimmedAccountName
-        transaction.merchantName = draft.trimmedMerchantName
-        transaction.originalDescription = draft.sourceText
-        transaction.amount = amount
-        transaction.transactionDate = draft.transactionDate
-        transaction.status = draft.status
-        transaction.category = category
-        transaction.duplicateState = .unique
-        transaction.updatedAt = .now
-    }
-
-    private func rememberMerchantRuleIfNeeded(for draft: OCRTransactionDraft, category: Category?) {
-        guard draft.shouldRememberMerchantRule else { return }
-        let merchantChanged = draft.trimmedMerchantName != draft.parsedMerchantName
-        let categorySelected = category != nil
-        guard merchantChanged || categorySelected else { return }
-
-        // Create-or-update: a confirmed/corrected suggestion becomes a local
-        // rule so the same merchant never needs an AI call again.
-        merchantRuleService.learnRule(
-            matchText: draft.sourceText,
-            displayName: draft.trimmedMerchantName,
-            category: category,
+        let outcome = importService.importDrafts(
+            draftsToImport,
+            categories: categories,
+            existingTransactions: transactions,
             existingRules: merchantRules,
-            modelContext: modelContext,
-            saveImmediately: false
+            modelContext: modelContext
         )
+
+        if let error = outcome.saveError {
+            importError = "\(error)\n\nNothing was imported. Your drafts are still here — try again."
+            saveMessage = nil
+            return
+        }
+
+        ocrReviewStore.removeDrafts(ids: Set(draftsToImport.map(\.id)))
+        var parts = ["Saved \(outcome.importedCount) transaction\(outcome.importedCount == 1 ? "" : "s") — \(outcome.persistedTransactionCount) now in your history."]
+        if scan.blockedCount > 0 {
+            parts.append("\(scan.blockedCount) high-confidence duplicate\(scan.blockedCount == 1 ? "" : "s") skipped.")
+        }
+        if scan.mediumMatchCount > 0 {
+            parts.append("\(scan.mediumMatchCount) saved as possible duplicate\(scan.mediumMatchCount == 1 ? "" : "s") — review under Possible Duplicates.")
+        }
+        saveMessage = parts.joined(separator: " ")
     }
 
     // MARK: - AI fallback
