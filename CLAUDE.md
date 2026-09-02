@@ -16,22 +16,26 @@ xcodebuild -project MyCost.xcodeproj -scheme MyCost \
   -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```
 
-### Tests are not wired into the project yet
+### Running tests
 
-`MyCostTests/` (XCTest unit tests, `@testable import MyCost`) and `MyCostUITests/` (XCUITest) contain real, maintained test source, but `MyCost.xcodeproj/project.pbxproj` currently declares **only the `MyCost` app target** — no test bundles. To run them you must first add a Unit Test Bundle and UI Test Bundle target in Xcode (test host = `MyCost`). After that:
+`MyCostTests` (XCTest unit tests, `@testable import MyCost`) is wired into `project.pbxproj` as a unit-test bundle with `TEST_HOST` = the `MyCost` app. Run it:
 
 ```sh
 xcodebuild test -project MyCost.xcodeproj -scheme MyCost \
-  -destination 'platform=iOS Simulator,name=iPhone 16'
+  -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:MyCostTests
 # single test:
 xcodebuild test ... -only-testing:MyCostTests/MyCostTests/testRecurringSuggestionDetectsAnnualPayments
 ```
 
-UI tests launch the app with the `-ui-testing` argument, which makes `MyCostApp` use an in-memory `ModelContainer`. Views expose `accessibilityIdentifier`s in `screen.element` form (e.g. `review.saveApproved`, `transactionEditor.merchant`) for UI tests to target.
+If `xcode-select` points at the Command Line Tools, prefix commands with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` instead of running `sudo xcode-select`.
+
+Two pre-existing tests (`testMultipleMonthsStaySeparated`, `testDuplicateMatcherTreatsSimilarMerchantsSameAmountAsMediumConfidence`) pass in isolation but fail in a full-suite run — a latent test-ordering/shared-state issue that predates the test target being wired up. Not caused by, and unrelated to, current feature work.
+
+`MyCostUITests/` (XCUITest) is still **not** a target — add a UI Test Bundle in Xcode to run it. UI tests launch the app with the `-ui-testing` argument, which makes `MyCostApp` use an in-memory `ModelContainer`. Views expose `accessibilityIdentifier`s in `screen.element` form (e.g. `review.saveApproved`, `transactionEditor.merchant`).
 
 ### project.pbxproj is hand-maintained
 
-The project file uses synthetic sequential IDs (`0000...`) and is **not** a file-system-synchronized group. Adding a Swift file requires four manual edits: a `PBXBuildFile` entry, a `PBXFileReference` entry, a child entry in the correct `PBXGroup`, and an entry in the `Sources` build phase. (See how `OCRTransactionImportCoordinator.swift` was added.)
+The project file uses synthetic sequential IDs (`0000...`) and is **not** a file-system-synchronized group. Adding a Swift file requires four manual edits: a `PBXBuildFile` entry, a `PBXFileReference` entry, a child entry in the correct `PBXGroup`, and an entry in the `Sources` build phase. (See how `OCRTransactionImportCoordinator.swift` was added.) Test-target files go in the `MyCostTests` group and the `0000…09A6` Sources phase.
 
 ## Architecture
 
@@ -59,6 +63,15 @@ Operates on `DuplicateTransactionSnapshot` value types (not `Transaction`) so it
 ### Analytics — `SpendingAnalytics.monthlySummary`
 
 Pure function over `[Transaction]`. Includes only current-month, non-excluded transactions. Reports posted vs. pending and recurring vs. non-recurring totals separately, plus highest/lowest category. Refunds (negative amounts) are intentionally kept in every total and in the hi/lo category calculation.
+
+### AI fallback categorization — `MerchantCategorization*` + `AICategorizationController`
+
+Deterministic merchant rules stay first priority; the AI provider is consulted **only** for transactions no rule matches. `MerchantCategorizationCoordinator.categorize(...)` is the single decision point and returns one `Outcome`: `.ruleMatch` (AI never called), `.aiSuggestion` (confidence ≥ threshold, needs user confirmation), `.lowConfidence` (below threshold — manual, offered only as a hint), or `.unresolved(.notConfigured | .requestFailed | .invalidResponse)` (manual). Nothing is applied automatically.
+
+- `MerchantCategorizationProviding` is the swap/disable seam. `DisabledMerchantCategorizationProvider` is the default when nothing is connected; `RemoteMerchantCategorizationProvider` speaks an OpenAI-compatible Chat Completions endpoint with **the end user's own key** from `AICredentialStoring` (Keychain in the app, in-memory in tests). The app ships no key of its own.
+- Only merchant description + optional amount + the category-name list leave the device (`MerchantCategorizationRequest` structurally carries nothing else). `MerchantCategorizationResponseParser` turns any malformed envelope/model output into `.invalidResponse`.
+- On confirm/correct, `MerchantRuleService.learnRule(...)` create-or-updates a `MerchantRule` (dedup by normalized key) so the same merchant resolves locally next time. In the Review flow this runs through the existing `shouldRememberMerchantRule` → save path.
+- UI: `AICategorizationController` (env object from `RootTabView`) owns connection state; connect/disconnect via `AICategorizationSettingsView` (sheet from `MerchantRulesView`). `ReviewTransactionsView` shows an "Ask AI" affordance per uncategorized draft and a confirm/dismiss banner.
 
 ### Recurring detection — `RecurringPaymentSuggestionService`
 

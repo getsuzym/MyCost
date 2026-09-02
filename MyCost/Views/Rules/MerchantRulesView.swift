@@ -4,11 +4,14 @@ import SwiftUI
 struct MerchantRulesView: View {
     @Environment(\.modelContext) private var modelContext
 
+    @EnvironmentObject private var aiController: AICategorizationController
+
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
 
     @State private var editingRule: MerchantRule?
     @State private var isAddingRule = false
+    @State private var isShowingAISettings = false
 
     var body: some View {
         List {
@@ -36,6 +39,15 @@ struct MerchantRulesView: View {
                 }
                 .accessibilityIdentifier("merchantRules.add")
             }
+
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    isShowingAISettings = true
+                } label: {
+                    Label("AI Categorization", systemImage: "sparkles")
+                }
+                .accessibilityIdentifier("merchantRules.aiSettings")
+            }
         }
         .sheet(item: $editingRule) { rule in
             NavigationStack {
@@ -46,6 +58,12 @@ struct MerchantRulesView: View {
             NavigationStack {
                 MerchantRuleEditorView(rule: nil, categories: categories)
             }
+        }
+        .sheet(isPresented: $isShowingAISettings) {
+            NavigationStack {
+                AICategorizationSettingsView()
+            }
+            .environmentObject(aiController)
         }
     }
 

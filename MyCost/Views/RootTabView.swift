@@ -4,6 +4,7 @@ import SwiftUI
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var ocrReviewStore = OCRTransactionReviewStore()
+    @StateObject private var aiCategorizationController = AICategorizationController()
 
     var body: some View {
         TabView {
@@ -27,6 +28,7 @@ struct RootTabView: View {
                 ReviewTransactionsView()
             }
             .environmentObject(ocrReviewStore)
+            .environmentObject(aiCategorizationController)
             .tabItem {
                 Label("Review", systemImage: "checklist")
             }
@@ -34,6 +36,7 @@ struct RootTabView: View {
             NavigationStack {
                 MerchantRulesView()
             }
+            .environmentObject(aiCategorizationController)
             .tabItem {
                 Label("Rules", systemImage: "wand.and.stars")
             }

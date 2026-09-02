@@ -686,6 +686,399 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.nonRecurringTotal, -12)
     }
 
+    // MARK: - AI fallback categorization
+
+    func testRecognizedTransactionResolvesViaRuleAndNeverCallsAI() async throws {
+        let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
+        let rule = MerchantRule(matchText: "SQ* Coffee Bar", displayName: "Coffee Bar", category: dining)
+        let provider = FakeMerchantCategorizationProvider(result: .success(aiSuggestion()))
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "SQ* COFFEE BAR #4821 SAN FRANCISCO CA",
+            amount: 5,
+            rules: [rule],
+            availableCategoryNames: ["Dining", "Groceries"]
+        )
+
+        XCTAssertEqual(outcome, .ruleMatch(displayName: "Coffee Bar", categoryName: "Dining", ruleID: rule.id))
+        XCTAssertEqual(provider.callCount, 0)
+    }
+
+    func testUnknownTransactionCallsAIWithOnlyMinimalPayload() async throws {
+        let provider = FakeMerchantCategorizationProvider(
+            result: .success(aiSuggestion("Trader Joe's", category: "Groceries", confidence: 0.92))
+        )
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "TJ 445 Q",
+            amount: 64.22,
+            rules: [],
+            availableCategoryNames: ["Groceries", "Dining"]
+        )
+
+        XCTAssertEqual(outcome, .aiSuggestion(aiSuggestion("Trader Joe's", category: "Groceries", confidence: 0.92)))
+        XCTAssertEqual(provider.callCount, 1)
+        let request = try XCTUnwrap(provider.requests.first)
+        XCTAssertEqual(request.merchantDescription, "TJ 445 Q")
+        XCTAssertEqual(request.amount, 64.22)
+        XCTAssertEqual(request.availableCategoryNames, ["Groceries", "Dining"])
+    }
+
+    func testAISuccessAboveThresholdReturnsConfidentSuggestion() async throws {
+        let suggestion = aiSuggestion("City Power", category: "Bills", confidence: 0.88)
+        let coordinator = MerchantCategorizationCoordinator(
+            provider: FakeMerchantCategorizationProvider(result: .success(suggestion)),
+            minimumConfidence: 0.7
+        )
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "CITY POWER UTILITY",
+            amount: 84.20,
+            rules: [],
+            availableCategoryNames: ["Bills"]
+        )
+
+        XCTAssertEqual(outcome, .aiSuggestion(suggestion))
+    }
+
+    func testLowConfidenceSuggestionIsNotAutoAccepted() async throws {
+        let suggestion = aiSuggestion("Mystery LLC", category: "Shopping", confidence: 0.41)
+        let coordinator = MerchantCategorizationCoordinator(
+            provider: FakeMerchantCategorizationProvider(result: .success(suggestion)),
+            minimumConfidence: 0.7
+        )
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "MYSTERY LLC 88213",
+            amount: 12,
+            rules: [],
+            availableCategoryNames: ["Shopping"]
+        )
+
+        XCTAssertEqual(outcome, .lowConfidence(suggestion))
+        XCTAssertNotEqual(outcome, .aiSuggestion(suggestion))
+    }
+
+    func testAINotConfiguredResolvesUnresolvedWithoutCallingProvider() async throws {
+        let provider = FakeMerchantCategorizationProvider(isConfigured: false, result: .success(aiSuggestion()))
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "UNKNOWN VENDOR",
+            amount: 9,
+            rules: [],
+            availableCategoryNames: ["Other"]
+        )
+
+        XCTAssertEqual(outcome, .unresolved(reason: .notConfigured))
+        XCTAssertEqual(provider.callCount, 0)
+    }
+
+    func testDisabledProviderAlwaysResolvesNotConfigured() async throws {
+        let coordinator = MerchantCategorizationCoordinator(provider: DisabledMerchantCategorizationProvider())
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "ANYTHING",
+            amount: nil,
+            rules: [],
+            availableCategoryNames: []
+        )
+
+        XCTAssertEqual(outcome, .unresolved(reason: .notConfigured))
+    }
+
+    func testAINetworkFailureFallsBackToUnresolved() async throws {
+        let provider = FakeMerchantCategorizationProvider(
+            result: .failure(MerchantCategorizationError.network("timeout"))
+        )
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "SHOP 12",
+            amount: 3,
+            rules: [],
+            availableCategoryNames: ["Other"]
+        )
+
+        XCTAssertEqual(outcome, .unresolved(reason: .requestFailed("timeout")))
+    }
+
+    func testInvalidAIResponseFallsBackToUnresolved() async throws {
+        let provider = FakeMerchantCategorizationProvider(
+            result: .failure(MerchantCategorizationError.invalidResponse("not json"))
+        )
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+
+        let outcome = await coordinator.categorize(
+            merchantDescription: "SHOP 34",
+            amount: 3,
+            rules: [],
+            availableCategoryNames: ["Other"]
+        )
+
+        XCTAssertEqual(outcome, .unresolved(reason: .invalidResponse("not json")))
+    }
+
+    func testResponseParserExtractsSuggestionFromValidResponse() throws {
+        let parser = MerchantCategorizationResponseParser()
+        let envelope = chatEnvelope(content: #"{"merchant": "Coffee Bar", "category": "Dining", "confidence": 0.83}"#)
+
+        let content = try parser.content(fromEnvelope: envelope)
+        let suggestion = try parser.suggestion(fromContent: content, availableCategoryNames: ["Dining", "Groceries"])
+
+        XCTAssertEqual(suggestion.normalizedMerchantName, "Coffee Bar")
+        XCTAssertEqual(suggestion.categoryName, "Dining")
+        XCTAssertEqual(suggestion.confidence, 0.83, accuracy: 0.0001)
+    }
+
+    func testResponseParserCanonicalizesCategoryCasingAndDropsUnknownCategory() throws {
+        let parser = MerchantCategorizationResponseParser()
+
+        let canonical = try parser.suggestion(
+            fromContent: #"{"merchant": "X", "category": "dining", "confidence": 0.9}"#,
+            availableCategoryNames: ["Dining"]
+        )
+        XCTAssertEqual(canonical.categoryName, "Dining")
+
+        let unknown = try parser.suggestion(
+            fromContent: #"{"merchant": "X", "category": "Rockets", "confidence": 0.9}"#,
+            availableCategoryNames: ["Dining"]
+        )
+        XCTAssertNil(unknown.categoryName)
+        XCTAssertEqual(unknown.confidence, 0.9, accuracy: 0.0001)
+    }
+
+    func testResponseParserRejectsMalformedModelOutput() {
+        let parser = MerchantCategorizationResponseParser()
+
+        for content in [
+            "totally not json",
+            #"{"category": "Dining", "confidence": 0.9}"#,      // missing merchant
+            #"{"merchant": "X", "confidence": "high"}"#,          // non-numeric confidence
+            #"{"merchant": "X", "confidence": 1.4}"#,             // out of range
+            #"{"merchant": "   ", "confidence": 0.9}"#            // blank merchant
+        ] {
+            XCTAssertThrowsError(
+                try parser.suggestion(fromContent: content, availableCategoryNames: ["Dining"]),
+                "Expected \(content) to be rejected"
+            ) { error in
+                guard case .invalidResponse = (error as? MerchantCategorizationError) else {
+                    return XCTFail("Expected .invalidResponse for \(content), got \(error)")
+                }
+            }
+        }
+    }
+
+    func testResponseParserRejectsEnvelopeWithoutContent() {
+        let parser = MerchantCategorizationResponseParser()
+        let envelope = try! JSONSerialization.data(withJSONObject: ["choices": []])
+
+        XCTAssertThrowsError(try parser.content(fromEnvelope: envelope)) { error in
+            guard case .invalidResponse = (error as? MerchantCategorizationError) else {
+                return XCTFail("Expected .invalidResponse, got \(error)")
+            }
+        }
+    }
+
+    func testRemoteProviderReportsNotConfiguredWithoutConnection() async {
+        let provider = RemoteMerchantCategorizationProvider(credentialStore: InMemoryAICredentialStore())
+
+        XCTAssertFalse(provider.isConfigured)
+        do {
+            _ = try await provider.suggestCategorization(for: .init(merchantDescription: "X"))
+            XCTFail("Expected notConfigured")
+        } catch {
+            XCTAssertEqual(error as? MerchantCategorizationError, .notConfigured)
+        }
+    }
+
+    func testRemoteProviderSendsOnlyMerchantAmountAndCategoryList() async throws {
+        let store = InMemoryAICredentialStore(
+            connection: AIProviderConnection(
+                endpointURL: URL(string: "https://ai.example.com/v1/chat/completions")!,
+                apiKey: "test-key",
+                model: "test-model"
+            )
+        )
+        let captured = CapturedRequestBox()
+        let provider = RemoteMerchantCategorizationProvider(credentialStore: store) { request in
+            captured.request = request
+            let envelope = try! JSONSerialization.data(withJSONObject: [
+                "choices": [["message": ["content": #"{"merchant": "Trader Joe's", "category": "Groceries", "confidence": 0.9}"#]]]
+            ])
+            return (envelope, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        let suggestion = try await provider.suggestCategorization(
+            for: .init(merchantDescription: "CHECKCARD 1234 TJS", amount: 12.34, availableCategoryNames: ["Groceries", "Dining"])
+        )
+
+        XCTAssertEqual(suggestion.normalizedMerchantName, "Trader Joe's")
+        XCTAssertEqual(suggestion.categoryName, "Groceries")
+
+        let request = try XCTUnwrap(captured.request)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+        let body = try XCTUnwrap(request.httpBody)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let messages = try XCTUnwrap(payload["messages"] as? [[String: String]])
+        let userContent = try XCTUnwrap(messages.first { $0["role"] == "user" }?["content"])
+        XCTAssertTrue(userContent.contains("CHECKCARD 1234 TJS"))
+        XCTAssertTrue(userContent.contains("12.34"))
+        // Nothing beyond merchant text + amount is present in the outbound prompt.
+        for forbidden in ["account", "Default", "balance", "date", "2026", "note"] {
+            XCTAssertFalse(userContent.lowercased().contains(forbidden.lowercased()), "Leaked '\(forbidden)'")
+        }
+    }
+
+    func testRemoteProviderMapsHTTPAndTransportFailuresToNetworkError() async {
+        let store = InMemoryAICredentialStore(
+            connection: AIProviderConnection(
+                endpointURL: URL(string: "https://ai.example.com")!, apiKey: "k", model: "m"
+            )
+        )
+
+        let httpErrorProvider = RemoteMerchantCategorizationProvider(credentialStore: store) { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!)
+        }
+        await assertThrowsNetworkError {
+            _ = try await httpErrorProvider.suggestCategorization(for: .init(merchantDescription: "X"))
+        }
+
+        let transportErrorProvider = RemoteMerchantCategorizationProvider(credentialStore: store) { _ in
+            throw URLError(.timedOut)
+        }
+        await assertThrowsNetworkError {
+            _ = try await transportErrorProvider.suggestCategorization(for: .init(merchantDescription: "X"))
+        }
+    }
+
+    func testRemoteProviderMapsUnreadableResponseToInvalidResponse() async {
+        let store = InMemoryAICredentialStore(
+            connection: AIProviderConnection(
+                endpointURL: URL(string: "https://ai.example.com")!, apiKey: "k", model: "m"
+            )
+        )
+        let provider = RemoteMerchantCategorizationProvider(credentialStore: store) { request in
+            (Data("<html>gateway error</html>".utf8),
+             HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        do {
+            _ = try await provider.suggestCategorization(for: .init(merchantDescription: "X"))
+            XCTFail("Expected invalidResponse")
+        } catch {
+            guard case .invalidResponse = (error as? MerchantCategorizationError) else {
+                return XCTFail("Expected invalidResponse, got \(error)")
+            }
+        }
+    }
+
+    func testConfirmedCorrectionLearnsRuleAndSkipsAIOnNextSimilarTransaction() async throws {
+        let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
+        context.insert(dining)
+        try context.save()
+
+        let provider = FakeMerchantCategorizationProvider(
+            result: .success(aiSuggestion("Coffee B", category: nil, confidence: 0.9))
+        )
+        let coordinator = MerchantCategorizationCoordinator(provider: provider)
+        let description = "SQ* COFFEE BAR #4821 SAN FRANCISCO CA"
+
+        let first = await coordinator.categorize(
+            merchantDescription: description, amount: 6.25, rules: [], availableCategoryNames: ["Dining"]
+        )
+        guard case .aiSuggestion = first else { return XCTFail("Expected an AI suggestion, got \(first)") }
+
+        // User corrects the merchant name and picks a category, then confirms.
+        let learned = MerchantRuleService().learnRule(
+            matchText: description,
+            displayName: "Coffee Bar",
+            category: dining,
+            existingRules: [],
+            modelContext: context
+        )
+        XCTAssertEqual(learned?.displayName, "Coffee Bar")
+        XCTAssertEqual(learned?.category?.name, "Dining")
+
+        let rules = try context.fetch(FetchDescriptor<MerchantRule>())
+        XCTAssertEqual(rules.count, 1)
+
+        let second = await coordinator.categorize(
+            merchantDescription: description, amount: 6.25, rules: rules, availableCategoryNames: ["Dining"]
+        )
+        XCTAssertEqual(second, .ruleMatch(displayName: "Coffee Bar", categoryName: "Dining", ruleID: rules[0].id))
+        XCTAssertEqual(provider.callCount, 1, "AI must not be called again for a now-recognized merchant")
+    }
+
+    func testLearnRuleUpdatesExistingRuleInsteadOfCreatingDuplicate() throws {
+        let groceries = Category(name: "Groceries", colorHex: "#2A9D8F", symbolName: "cart")
+        let dining = Category(name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife")
+        context.insert(groceries)
+        context.insert(dining)
+        let existing = MerchantRule(matchText: "AMZN Mktp US", displayName: "Amazon", category: groceries)
+        context.insert(existing)
+        try context.save()
+
+        let rules = try context.fetch(FetchDescriptor<MerchantRule>())
+        let updated = MerchantRuleService().learnRule(
+            matchText: "AMZN MKTP US*2L88Z4Y03",
+            displayName: "Amazon Marketplace",
+            category: dining,
+            existingRules: rules,
+            modelContext: context
+        )
+
+        XCTAssertEqual(updated?.id, existing.id)
+        XCTAssertEqual(existing.displayName, "Amazon Marketplace")
+        XCTAssertEqual(existing.category?.name, "Dining")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MerchantRule>()).count, 1)
+    }
+
+    func testLearnRuleInsertsWhenNoMatchAndRejectsEmptyInput() throws {
+        XCTAssertNil(MerchantRuleService().learnRule(
+            matchText: "   ", displayName: "Ignored", category: nil, existingRules: [], modelContext: context
+        ))
+        XCTAssertNil(MerchantRuleService().learnRule(
+            matchText: "New Shop", displayName: "  ", category: nil, existingRules: [], modelContext: context
+        ))
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MerchantRule>()).count, 0)
+
+        let created = MerchantRuleService().learnRule(
+            matchText: "NEW SHOP #22", displayName: "New Shop", category: nil, existingRules: [], modelContext: context
+        )
+        XCTAssertNotNil(created)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MerchantRule>()).count, 1)
+    }
+
+    private func aiSuggestion(
+        _ merchant: String = "Merchant",
+        category: String? = nil,
+        confidence: Double = 0.9
+    ) -> MerchantCategorizationSuggestion {
+        MerchantCategorizationSuggestion(normalizedMerchantName: merchant, categoryName: category, confidence: confidence)
+    }
+
+    private func chatEnvelope(content: String) -> Data {
+        try! JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]]])
+    }
+
+    private func assertThrowsNetworkError(
+        _ operation: () async throws -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            try await operation()
+            XCTFail("Expected a network error", file: file, line: line)
+        } catch {
+            guard case .network = (error as? MerchantCategorizationError) else {
+                return XCTFail("Expected .network, got \(error)", file: file, line: line)
+            }
+        }
+    }
+
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }
@@ -719,4 +1112,33 @@ final class MyCostTests: XCTestCase {
             status: .posted
         )
     }
+}
+
+/// Records every call and returns a canned result, so tests can assert both the
+/// outbound request and that the AI was (or was not) consulted.
+final class FakeMerchantCategorizationProvider: MerchantCategorizationProviding, @unchecked Sendable {
+    let isConfigured: Bool
+    var result: Result<MerchantCategorizationSuggestion, Error>
+    private(set) var requests: [MerchantCategorizationRequest] = []
+
+    var callCount: Int { requests.count }
+
+    init(
+        isConfigured: Bool = true,
+        result: Result<MerchantCategorizationSuggestion, Error>
+    ) {
+        self.isConfigured = isConfigured
+        self.result = result
+    }
+
+    func suggestCategorization(
+        for request: MerchantCategorizationRequest
+    ) async throws -> MerchantCategorizationSuggestion {
+        requests.append(request)
+        return try result.get()
+    }
+}
+
+final class CapturedRequestBox: @unchecked Sendable {
+    var request: URLRequest?
 }

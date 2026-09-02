@@ -156,6 +156,21 @@ final class OCRTransactionReviewStore: ObservableObject {
         drafts.removeAll { $0.id == id }
     }
 
+    /// Applies a confirmed AI (or rule) categorization onto a draft and marks it
+    /// to be remembered as a `MerchantRule` when the batch is saved. The user
+    /// can still edit the fields afterwards — corrections are captured at save.
+    func applyCategorization(to id: UUID, merchantName: String, categoryID: UUID?) {
+        guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            drafts[index].merchantName = trimmed
+        }
+        if let categoryID {
+            drafts[index].selectedCategoryID = categoryID
+        }
+        drafts[index].shouldRememberMerchantRule = true
+    }
+
     func removeDrafts(ids: Set<UUID>) {
         drafts.removeAll { ids.contains($0.id) }
     }
