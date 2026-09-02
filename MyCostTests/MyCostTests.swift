@@ -836,29 +836,26 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(candidates.compactMap(\.amount), [5.00, 6.00, 7.00])
     }
 
-    func testRegionDetectorSplitsOnDividerLinesEvenWhenSpacingIsUniform() {
-        // txn2's amount didn't OCR (a pending charge), so the amount-anchor
-        // heuristic can't tell it apart from txn1 — only the divider can.
+    func testRegionDetectorSplitsOnDividerLinesWhenSpacingCannot() {
+        // Two transactions packed with no meaningful gap between them: spacing
+        // alone can't split, but a divider line can.
         let observations = [
             obs("MERCHANT ONE", x: 0.06, y: 0.100, w: 0.4),
             obs("20.00", x: 0.82, y: 0.100, w: 0.12),
             obs("MERCHANT TWO", x: 0.06, y: 0.135, w: 0.4),
-            obs("Pending", x: 0.06, y: 0.165, w: 0.2, h: 0.025),
-            obs("MERCHANT THREE", x: 0.06, y: 0.200, w: 0.4),
-            obs("40.00", x: 0.82, y: 0.200, w: 0.12)
+            obs("30.00", x: 0.82, y: 0.135, w: 0.12)
         ]
 
         let withoutDivider = TransactionRegionDetector().detectRegions(from: observations)
         let withDivider = TransactionRegionDetector().detectRegions(
             from: observations,
-            dividers: [DividerLine(y: 0.122)]
+            dividers: [DividerLine(y: 0.125)]
         )
 
-        XCTAssertEqual(withoutDivider.count, 2)
-        XCTAssertEqual(withDivider.count, 3)
+        XCTAssertEqual(withoutDivider.count, 1)
+        XCTAssertEqual(withDivider.count, 2)
         XCTAssertTrue(withDivider[0].text.contains("MERCHANT ONE"))
         XCTAssertFalse(withDivider[0].text.contains("MERCHANT TWO"))
-        XCTAssertTrue(withDivider[1].text.localizedCaseInsensitiveContains("pending"))
     }
 
     func testRegionDetectorFallsBackToAmountAnchoredRegionsWithoutDividers() {

@@ -54,12 +54,16 @@ struct TransactionRegionDetector {
     struct Configuration {
         /// Two observations belong to the same row if their vertical spans
         /// overlap by at least this ratio, or their centers are closer than
-        /// `rowCenterHeightFactor` × median text height.
+        /// `rowCenterHeightFactor` × median text height. Compared against the
+        /// row's first (anchor) observation, not the growing union.
         var rowOverlapRatio: CGFloat = 0.30
-        var rowCenterHeightFactor: CGFloat = 0.55
+        var rowCenterHeightFactor: CGFloat = 0.60
+        /// Rows closer than this × median height are one tightly-packed block
+        /// (a wrapped description) and never split.
+        var tightGapFactor: CGFloat = 0.6
         /// A gap starts a new region when it exceeds `gapMultiple` × the typical
         /// inter-row gap and is also at least `gapHeightFactor` × median height.
-        var gapMultiple: CGFloat = 1.8
+        var gapMultiple: CGFloat = 2.2
         var gapHeightFactor: CGFloat = 0.9
         /// A divider cuts at its nearest row gap only if within this distance.
         var dividerSnapDistance: CGFloat = 0.04
@@ -70,15 +74,18 @@ struct TransactionRegionDetector {
     private let configuration: Configuration
     private let containsAmount: (String) -> Bool
     private let isSectionHeader: (String) -> Bool
+    private let isDetailContinuation: (String) -> Bool
 
     init(
         configuration: Configuration = .default,
         containsAmount: @escaping (String) -> Bool = { TransactionTextHeuristics().containsAmount(in: $0) },
-        isSectionHeader: @escaping (String) -> Bool = { TransactionTextHeuristics().dateOnlyHeader(in: $0) != nil }
+        isSectionHeader: @escaping (String) -> Bool = { TransactionTextHeuristics().dateOnlyHeader(in: $0) != nil },
+        isDetailContinuation: @escaping (String) -> Bool = { TransactionTextHeuristics().isDetailContinuationLine($0) }
     ) {
         self.configuration = configuration
         self.containsAmount = containsAmount
         self.isSectionHeader = isSectionHeader
+        self.isDetailContinuation = isDetailContinuation
     }
 
     func detectRegions(
@@ -111,10 +118,12 @@ struct TransactionRegionDetector {
         var lines: [[OCRTextObservation]] = []
 
         for observation in sorted {
-            if let index = lines.indices.last {
-                let currentFrame = unionFrame(lines[index])
-                let overlap = verticalOverlapRatio(observation.frame, currentFrame)
-                let centerClose = abs(observation.centerY - currentFrame.midY)
+            // Compare against the row's anchor (its first, left-most-topmost
+            // observation), not the union — an amount that renders a little
+            // lower must not stretch the row down onto the line below it.
+            if let index = lines.indices.last, let anchor = lines[index].first {
+                let overlap = verticalOverlapRatio(observation.frame, anchor.frame)
+                let centerClose = abs(observation.centerY - anchor.centerY)
                     <= medianHeight * configuration.rowCenterHeightFactor
                 if overlap >= configuration.rowOverlapRatio || centerClose {
                     lines[index].append(observation)
@@ -171,15 +180,26 @@ struct TransactionRegionDetector {
             if index > 0 { boundaries.insert(index - 1) }
         }
 
-        // 4. Each amount-bearing row starts a new transaction; the non-amount
-        //    rows beneath it (city, "Pay in Installments") are trailing detail.
-        //    So cut just before every amount row except the first one.
-        var seenAmountRow = false
-        for index in lines.indices where containsAmount(lines[index].text) {
-            if seenAmountRow, index > 0 {
-                boundaries.insert(index - 1)
+        // 4. Sequential assembly. A row starts a new transaction only once the
+        //    current one already has an amount and the row is neither tightly
+        //    packed against the row above (a wrapped description) nor a detail
+        //    continuation ("City, PROV", "Pay in Installments", bare amount).
+        var regionHasAmount = false
+        for index in lines.indices {
+            let line = lines[index]
+            if index > 0,
+               !isSectionHeader(line.text),
+               !isSectionHeader(lines[index - 1].text),
+               regionHasAmount {
+                let gapAbove = max(0, line.minY - lines[index - 1].maxY)
+                let tight = gapAbove <= medianHeight * configuration.tightGapFactor
+                if !tight, !isDetailContinuation(line.text) {
+                    boundaries.insert(index - 1)
+                    regionHasAmount = false
+                }
             }
-            seenAmountRow = true
+            if containsAmount(line.text) { regionHasAmount = true }
+            if isSectionHeader(line.text) { regionHasAmount = false }
         }
 
         return boundaries

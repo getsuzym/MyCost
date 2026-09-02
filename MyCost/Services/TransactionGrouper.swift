@@ -131,22 +131,33 @@ struct TransactionGrouper {
         if status == nil { flags.insert(.missingStatus) }
         confidence.status = status == nil ? 0 : 0.95
 
-        // MARK: Merchant — left-side text, minus the amount / date / status
+        // MARK: Merchant — left-side text of each row, dropping detail rows
+        // ("City, PROV", "Pay in Installments") that follow the first row so a
+        // wrapped merchant name survives but the address/tag lines don't.
         let amountTexts = Set(amountObservations.map(\.text))
-        let merchantObservations = observations.enumerated().filter { index, observation in
-            if amountTexts.contains(observation.text) { return false }
-            let isTopRow = index == 0
-            let inLeftZone = centerXFraction(observation, in: bounds) <= configuration.leftZoneThreshold
-            return isTopRow || inLeftZone
+        var merchantRows: [String] = []
+        for (lineIndex, textLine) in region.lines.enumerated() {
+            let leftText = textLine.observations
+                .filter { observation in
+                    !amountTexts.contains(observation.text)
+                        && centerXFraction(observation, in: bounds) <= configuration.leftZoneThreshold
+                }
+                .map(\.text)
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            guard !leftText.isEmpty else { continue }
+            if lineIndex > 0, heuristics.isDetailContinuationLine(leftText) { continue }
+            merchantRows.append(leftText)
         }
-        .map(\.element)
 
-        let merchantSource = merchantObservations.map(\.text).joined(separator: " ")
         let removable = (dateMatch.originalText.map { [$0] } ?? []) + amountObservations.map(\.text)
-        let merchant = heuristics.cleanMerchantDescription(from: merchantSource, removing: removable)
+        let merchant = heuristics.cleanMerchantDescription(
+            from: merchantRows.joined(separator: " "),
+            removing: removable
+        )
 
         if merchant.isEmpty { flags.insert(.missingMerchantDescription) }
-        confidence.merchantDescription = merchant.isEmpty ? 0 : (merchantObservations.count > 1 ? 0.78 : 0.85)
+        confidence.merchantDescription = merchant.isEmpty ? 0 : (merchantRows.count > 1 ? 0.78 : 0.85)
 
         // MARK: Classify the region
         let hasAmount = amount != nil || flags.contains(.multipleAmounts)

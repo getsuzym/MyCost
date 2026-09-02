@@ -199,6 +199,18 @@ struct TransactionTextHeuristics {
 
     static let chevronAndBulletCharacters = CharacterSet(charactersIn: "-*•·°:>‹›<»«")
 
+    /// True for a row that continues the transaction above rather than starting
+    /// a new one: a "City, PROV" place line, a "Pay in Installments" tag, or
+    /// text with no letters (a bare amount / chevron).
+    func isDetailContinuationLine(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return true }
+        if trimmed.range(of: #"(?i)installment"#, options: .regularExpression) != nil { return true }
+        if trimmed.range(of: #"^[\p{L} .'\-]{2,},\s*[A-Za-z]{2}\b"#, options: .regularExpression) != nil { return true }
+        if !trimmed.contains(where: { $0.isLetter }) { return true }
+        return false
+    }
+
     /// A line that is essentially just a date (a statement section header),
     /// returning the parsed date. Used to split regions and to carry the date
     /// forward to every transaction in the section.
