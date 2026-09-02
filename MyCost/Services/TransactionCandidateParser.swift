@@ -85,12 +85,40 @@ struct TransactionCandidateParser {
 
         guard !lines.isEmpty else { return [] }
 
+        let sectionDates = sectionDateHeaders(in: lines)
+
         return candidateLineGroups(from: lines).compactMap { group in
-            parseCandidate(sourceLines: group, originalOCRText: originalOCRText)
+            parseCandidate(
+                sourceLines: Array(lines[group.start...group.end]),
+                fallbackDate: sectionDate(before: group.start, in: sectionDates),
+                originalOCRText: originalOCRText
+            )
         }
     }
 
-    private func candidateLineGroups(from lines: [String]) -> [[String]] {
+    /// Many statement UIs print the date once as a section header and then list
+    /// several transactions under it. This maps each line index to the date of
+    /// the closest header at or above it, so every transaction in the section
+    /// inherits it — not just the first one.
+    private func sectionDateHeaders(in lines: [String]) -> [(index: Int, date: Date)] {
+        lines.enumerated().compactMap { index, line in
+            guard !containsAmount(in: line) else { return nil }
+            let detection = detectDate(in: line)
+            guard let date = detection.date, let original = detection.originalText else { return nil }
+            // A header is a line that is essentially just the date.
+            let remainder = line
+                .replacingOccurrences(of: original, with: " ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-•·°:>‹›< ,"))
+            guard remainder.count <= 3 else { return nil }
+            return (index, date)
+        }
+    }
+
+    private func sectionDate(before index: Int, in headers: [(index: Int, date: Date)]) -> Date? {
+        headers.last { $0.index <= index }?.date
+    }
+
+    private func candidateLineGroups(from lines: [String]) -> [(start: Int, end: Int)] {
         var ranges: [(start: Int, end: Int)] = []
 
         for (index, line) in lines.enumerated() {
@@ -147,12 +175,14 @@ struct TransactionCandidateParser {
             ranges.append((index, endIndex))
         }
 
-        return ranges
-            .sorted { $0.start < $1.start }
-            .map { Array(lines[$0.start...$0.end]) }
+        return ranges.sorted { $0.start < $1.start }
     }
 
-    private func parseCandidate(sourceLines: [String], originalOCRText: String) -> TransactionCandidate? {
+    private func parseCandidate(
+        sourceLines: [String],
+        fallbackDate: Date?,
+        originalOCRText: String
+    ) -> TransactionCandidate? {
         let sourceText = sourceLines.joined(separator: "\n")
         let joinedText = sourceLines.joined(separator: " ")
         let amountMatches = amountMatches(in: joinedText)
@@ -163,7 +193,12 @@ struct TransactionCandidateParser {
         var flags = Set<TransactionCandidateValidationFlag>()
         var confidence = TransactionCandidateFieldConfidences.empty
 
-        if dateMatch.date == nil {
+        // A date on the transaction's own line wins; otherwise fall back to the
+        // section header date, if this group sits under one.
+        let effectiveDate = dateMatch.date ?? fallbackDate
+        let usedSectionDate = dateMatch.date == nil && fallbackDate != nil
+
+        if effectiveDate == nil {
             flags.insert(.missingDate)
         } else if dateMatch.inferredYear {
             flags.insert(.inferredYear)
@@ -171,7 +206,7 @@ struct TransactionCandidateParser {
         if dateMatch.ambiguous {
             flags.insert(.ambiguousDate)
         }
-        confidence.date = dateMatch.confidence
+        confidence.date = dateMatch.date != nil ? dateMatch.confidence : (usedSectionDate ? 0.85 : 0)
 
         if status == nil {
             flags.insert(.missingStatus)
@@ -199,12 +234,18 @@ struct TransactionCandidateParser {
         }
         confidence.merchantDescription = merchantDescription.isEmpty ? 0 : 0.8
 
-        guard selectedAmount != nil || dateMatch.date != nil || !merchantDescription.isEmpty else {
+        // Drop rows that carry an amount but no real merchant — card balances
+        // ("VISA / CAD 334.34"), status-bar noise, currency-code-only lines.
+        if isNonMerchantText(merchantDescription) {
+            return nil
+        }
+
+        guard selectedAmount != nil || effectiveDate != nil || !merchantDescription.isEmpty else {
             return nil
         }
 
         return TransactionCandidate(
-            detectedDate: dateMatch.date,
+            detectedDate: effectiveDate,
             rawMerchantDescription: merchantDescription,
             amount: selectedAmount?.value,
             status: status,
@@ -358,9 +399,35 @@ struct TransactionCandidateParser {
 
         return cleaned
             .components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: chevronAndBulletCharacters) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-*• "))
+            .trimmingCharacters(in: chevronAndBulletCharacters.union(.whitespaces))
+    }
+
+    private var chevronAndBulletCharacters: CharacterSet {
+        CharacterSet(charactersIn: "-*•·°:>‹›<»«")
+    }
+
+    /// True when the text has some content but no token that could plausibly be
+    /// a merchant name — only currency codes, card-network words, or bare
+    /// numbers/times. An empty string is *not* rejected here; that case is left
+    /// to the missing-merchant flag and the caller's keep-for-review guard.
+    private func isNonMerchantText(_ text: String) -> Bool {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let ignored: Set<String> = [
+            "CAD", "USD", "EUR", "GBP", "AUD", "MXN", "JPY",
+            "VISA", "MASTERCARD", "AMEX", "DISCOVER", "INTERAC",
+            "DEBIT", "CREDIT", "CARD", "ACCOUNT", "BALANCE"
+        ]
+        let meaningful = text
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",.:;")).uppercased() }
+            .filter { token in
+                guard token.count > 1, !ignored.contains(token) else { return false }
+                return token.contains { $0.isLetter }
+            }
+        return meaningful.isEmpty
     }
 
     private func isLikelyCredit(_ text: String) -> Bool {

@@ -311,6 +311,45 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(candidates[0].validationFlags.contains(.missingAmount))
     }
 
+    func testTransactionCandidateParserHandlesSectionedStatementWithSharedDateHeaders() {
+        let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
+        // Real Vision OCR of a Canadian VISA statement: one date header per
+        // section, merchant / city / amount on separate lines, "›" chevrons,
+        // and a card-balance line up top.
+        let candidates = parser.parse(lines: [
+            "6:12 4", "984", "VISA", "CAD 334.34", ":", "Postea u",
+            "Aug 29, 2026",
+            "GOOGLE*YOUTUBEPREMIUM", "HALIFAX, NS", "25.75 >",
+            "AMAZON", "VANCOUVER, BC", "11.19 >",
+            "CATHAYPACAIR1602135482141", "VANCOUVER, BC", "297.40 >",
+            "•° Pay in Installments",
+            "Aug 28, 2026",
+            "PAYMENT - THANK YOU /", "PAIEMENT - MERCI", "-1,656.46 ›",
+            "Aug 26, 2026",
+            "CATHAYPACAIR1602135408008", "VANCOUVER, BC", "699.79 >",
+            "Pay in Installments",
+            "Home", "Accounts", "Move Money", "More"
+        ])
+
+        // The card-balance row ("VISA / CAD 334.34") is not a transaction.
+        XCTAssertEqual(candidates.count, 5)
+        XCTAssertFalse(candidates.contains { $0.amount == 334.34 })
+
+        let byAmount = Dictionary(uniqueKeysWithValues: candidates.compactMap { c in c.amount.map { ($0, c) } })
+
+        // Every transaction in a section inherits that section's date header.
+        XCTAssertEqual(byAmount[25.75]?.detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(byAmount[11.19]?.detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(byAmount[297.40]?.detectedDate, date(2026, 8, 29))
+        XCTAssertEqual(byAmount[-1656.46]?.detectedDate, date(2026, 8, 28))
+        XCTAssertEqual(byAmount[699.79]?.detectedDate, date(2026, 8, 26))
+        XCTAssertFalse(candidates.contains { $0.validationFlags.contains(.missingDate) })
+
+        // Chevrons are stripped from the merchant text.
+        XCTAssertEqual(byAmount[25.75]?.rawMerchantDescription, "GOOGLE*YOUTUBEPREMIUM HALIFAX, NS")
+        XCTAssertTrue(byAmount[11.19]?.rawMerchantDescription.contains("AMAZON") == true)
+    }
+
     func testTransactionCandidateParserHandlesRefundsAsNegativeAmounts() {
         let parser = TransactionCandidateParser(referenceDate: date(2026, 8, 31))
 
