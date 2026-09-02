@@ -85,9 +85,9 @@ struct TransactionHistoryView: View {
     }
 
     private func deleteTransactions(at offsets: IndexSet) {
-        let toDelete = offsets.map { filteredTransactions[$0] }
-        for transaction in toDelete {
-            modelContext.delete(transaction)
+        let rows = filteredTransactions
+        for index in offsets where rows.indices.contains(index) {
+            modelContext.delete(rows[index])
         }
         try? modelContext.save()
     }
