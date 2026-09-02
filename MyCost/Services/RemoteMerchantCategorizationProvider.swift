@@ -1,72 +1,57 @@
 import Foundation
 
-/// Parses the two layers of an OpenAI-compatible Chat Completions reply:
-/// the transport envelope (`choices[0].message.content`) and the JSON object
-/// the model was asked to put inside that content. Every structural problem
-/// becomes `MerchantCategorizationError.invalidResponse` so callers can treat
-/// a broken response the same as any other failure.
-struct MerchantCategorizationResponseParser {
-    func content(fromEnvelope data: Data) throws -> String {
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw MerchantCategorizationError.invalidResponse("Response was not a JSON object.")
-        }
+// (Filename kept for project stability; this holds the concrete
+// AIClassificationProvider implementations and their shared response parser.)
 
-        guard
-            let choices = root["choices"] as? [[String: Any]],
-            let firstChoice = choices.first,
-            let message = firstChoice["message"] as? [String: Any],
-            let content = message["content"] as? String,
-            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            throw MerchantCategorizationError.invalidResponse("Response had no message content.")
-        }
-
-        return content
-    }
-
-    func suggestion(
+/// Validates and canonicalizes the strict JSON both providers are asked to
+/// return: `{ "normalizedMerchantName": string, "suggestedCategory": string|null,
+/// "confidence": number 0..1, "reasoningSummary": string|null }`. Any structural
+/// problem becomes ``AIClassificationError/invalidResponse(_:)``.
+struct ClassificationResponseParser {
+    func classification(
         fromContent content: String,
         availableCategoryNames: [String]
-    ) throws -> MerchantCategorizationSuggestion {
+    ) throws -> MerchantClassification {
         guard
             let data = extractJSONObject(from: content).data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            throw MerchantCategorizationError.invalidResponse("Model output was not a JSON object.")
+            throw AIClassificationError.invalidResponse("Model output was not a JSON object.")
+        }
+
+        let merchant = (object["normalizedMerchantName"] as? String
+            ?? object["merchant"] as? String
+            ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !merchant.isEmpty else {
+            throw AIClassificationError.invalidResponse("Missing 'normalizedMerchantName'.")
         }
 
         guard
-            let merchant = (object["merchant"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !merchant.isEmpty
+            let confidenceNumber = object["confidence"] as? NSNumber,
+            !isBoolean(confidenceNumber)
         else {
-            throw MerchantCategorizationError.invalidResponse("Missing 'merchant' in model output.")
+            throw AIClassificationError.invalidResponse("Missing or non-numeric 'confidence'.")
         }
-
-        guard let confidenceValue = object["confidence"] as? NSNumber, !isBoolean(confidenceValue) else {
-            throw MerchantCategorizationError.invalidResponse("Missing or non-numeric 'confidence'.")
-        }
-        let confidence = confidenceValue.doubleValue
+        let confidence = confidenceNumber.doubleValue
         guard confidence >= 0, confidence <= 1 else {
-            throw MerchantCategorizationError.invalidResponse("'confidence' must be between 0 and 1.")
+            throw AIClassificationError.invalidResponse("'confidence' must be between 0 and 1.")
         }
 
-        let categoryName = canonicalCategory(
-            for: object["category"] as? String,
+        let category = canonicalCategory(
+            for: object["suggestedCategory"] as? String ?? object["category"] as? String,
             in: availableCategoryNames
         )
+        let reasoning = (object["reasoningSummary"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return MerchantCategorizationSuggestion(
+        return MerchantClassification(
             normalizedMerchantName: merchant,
-            categoryName: categoryName,
-            confidence: confidence
+            suggestedCategory: category,
+            confidence: confidence,
+            reasoningSummary: (reasoning?.isEmpty ?? true) ? nil : reasoning
         )
     }
 
-    /// An unknown or empty category is dropped (returns `nil`) rather than
-    /// failing the whole suggestion — a usable merchant name plus manual
-    /// category selection is still better than nothing.
     private func canonicalCategory(for raw: String?, in available: [String]) -> String? {
         guard let raw else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -74,15 +59,12 @@ struct MerchantCategorizationResponseParser {
         return available.first { $0.compare(trimmed, options: .caseInsensitive) == .orderedSame }
     }
 
-    /// Tolerates models that wrap the JSON in prose or a ```json fence.
     private func extractJSONObject(from content: String) -> String {
         guard
             let start = content.firstIndex(of: "{"),
             let end = content.lastIndex(of: "}"),
             start < end
-        else {
-            return content
-        }
+        else { return content }
         return String(content[start...end])
     }
 
@@ -91,97 +73,177 @@ struct MerchantCategorizationResponseParser {
     }
 }
 
-/// Concrete provider for any OpenAI-compatible Chat Completions endpoint,
-/// authenticated with the end user's own key from ``AICredentialStoring``.
-/// Networking is injected so it can be exercised without a live server.
-struct RemoteMerchantCategorizationProvider: MerchantCategorizationProviding {
-    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
-
-    private let credentialStore: AICredentialStoring
-    private let transport: Transport
-    private let parser = MerchantCategorizationResponseParser()
-
-    init(
-        credentialStore: AICredentialStoring,
-        transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }
-    ) {
-        self.credentialStore = credentialStore
-        self.transport = transport
-    }
-
-    var isConfigured: Bool { credentialStore.loadConnection() != nil }
-
-    func suggestCategorization(
-        for request: MerchantCategorizationRequest
-    ) async throws -> MerchantCategorizationSuggestion {
-        guard let connection = credentialStore.loadConnection() else {
-            throw MerchantCategorizationError.notConfigured
-        }
-
-        let urlRequest = try makeURLRequest(for: request, connection: connection)
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await transport(urlRequest)
-        } catch is CancellationError {
-            throw MerchantCategorizationError.cancelled
-        } catch {
-            throw MerchantCategorizationError.network(error.localizedDescription)
-        }
-
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw MerchantCategorizationError.network("HTTP \(http.statusCode)")
-        }
-
-        let content = try parser.content(fromEnvelope: data)
-        return try parser.suggestion(
-            fromContent: content,
-            availableCategoryNames: request.availableCategoryNames
-        )
-    }
-
-    /// Exposed for tests: builds the exact request body that would be sent so
-    /// its payload can be asserted on (only merchant + amount + category list).
-    func makeURLRequest(
-        for request: MerchantCategorizationRequest,
-        connection: AIProviderConnection
-    ) throws -> URLRequest {
-        var urlRequest = URLRequest(url: connection.endpointURL)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(connection.apiKey)", forHTTPHeaderField: "Authorization")
-
-        let body: [String: Any] = [
-            "model": connection.model,
-            "temperature": 0,
-            "response_format": ["type": "json_object"],
-            "messages": [
-                ["role": "system", "content": Self.systemPrompt(categories: request.availableCategoryNames)],
-                ["role": "user", "content": Self.userPrompt(for: request)]
-            ]
-        ]
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-        return urlRequest
-    }
-
-    static func systemPrompt(categories: [String]) -> String {
-        let list = categories.isEmpty ? "any short label" : categories.joined(separator: ", ")
+/// Shared bits both concrete providers need.
+enum AIClassificationPrompt {
+    static func system(categories: [String]) -> String {
+        let list = categories.isEmpty ? "a short label" : categories.joined(separator: ", ")
         return """
-        You normalize a single card/bank payment description and classify it.
-        Reply with ONLY a JSON object, no prose, of the exact shape:
-        {"merchant": string, "category": string or null, "confidence": number between 0 and 1}
-        "merchant" is a clean, human-readable merchant name.
-        "category" must be exactly one of: \(list). Use null if none clearly fits.
-        "confidence" is your certainty in the classification.
+        You normalize one card/bank payment description and classify it.
+        Reply with ONLY a JSON object, no prose:
+        {"normalizedMerchantName": string, "suggestedCategory": string or null, "confidence": number between 0 and 1, "reasoningSummary": string or null}
+        "suggestedCategory" must be exactly one of: \(list). Use null if none clearly fits.
+        "confidence" is your certainty in the classification. Keep "reasoningSummary" to one short sentence or null.
         """
     }
 
-    static func userPrompt(for request: MerchantCategorizationRequest) -> String {
+    static func user(for request: MerchantClassificationRequest) -> String {
         var lines = ["Description: \(request.merchantDescription)"]
         if let amount = request.amount {
             lines.append("Amount: \(NSDecimalNumber(decimal: amount).stringValue)")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+typealias AITransport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+/// Real networking. Injected everywhere so tests can substitute a stub.
+let defaultAITransport: AITransport = { try await URLSession.shared.data(for: $0) }
+
+private func mapTransportError(_ error: Error) -> AIClassificationError {
+    if error is CancellationError { return .cancelled }
+    return .network(error.localizedDescription)
+}
+
+private func mapHTTPStatus(_ code: Int) -> AIClassificationError? {
+    switch code {
+    case 200..<300: return nil
+    case 401, 403: return .credentialsExpired
+    case 429: return .network("Rate limited (HTTP 429)")
+    default: return .network("HTTP \(code)")
+    }
+}
+
+// MARK: - OpenAI
+
+struct OpenAIClassificationProvider: AIClassificationProvider {
+    let kind: AIProviderKind = .openAI
+    private let endpoint: URL
+    private let model: String
+    private let secretStore: AISecretStore
+    private let transport: AITransport
+    private let parser = ClassificationResponseParser()
+
+    init(
+        endpoint: URL = AIProviderKind.openAI.defaultEndpoint,
+        model: String = AIProviderKind.openAI.defaultModel,
+        secretStore: AISecretStore,
+        transport: @escaping AITransport = defaultAITransport
+    ) {
+        self.endpoint = endpoint
+        self.model = model
+        self.secretStore = secretStore
+        self.transport = transport
+    }
+
+    var isConfigured: Bool { secretStore.secret(for: kind.keychainAccount)?.isUsable == true }
+
+    func validateConnection() async throws {
+        _ = try await classify(MerchantClassificationRequest(merchantDescription: "TEST", availableCategoryNames: []))
+    }
+
+    func classify(_ request: MerchantClassificationRequest) async throws -> MerchantClassification {
+        guard let key = secretStore.secret(for: kind.keychainAccount)?.apiKey, !key.isEmpty else {
+            throw AIClassificationError.providerUnavailable
+        }
+
+        var urlRequest = URLRequest(url: endpoint)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "temperature": 0,
+            "response_format": ["type": "json_object"],
+            "messages": [
+                ["role": "system", "content": AIClassificationPrompt.system(categories: request.availableCategoryNames)],
+                ["role": "user", "content": AIClassificationPrompt.user(for: request)]
+            ]
+        ], options: [.sortedKeys])
+
+        let (data, response) = try await perform(urlRequest)
+        if let http = response as? HTTPURLResponse, let error = mapHTTPStatus(http.statusCode) { throw error }
+
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let choices = root["choices"] as? [[String: Any]],
+            let message = choices.first?["message"] as? [String: Any],
+            let content = message["content"] as? String
+        else {
+            throw AIClassificationError.invalidResponse("Unexpected Chat Completions envelope.")
+        }
+        return try parser.classification(fromContent: content, availableCategoryNames: request.availableCategoryNames)
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do { return try await transport(request) } catch { throw mapTransportError(error) }
+    }
+}
+
+// MARK: - Anthropic
+
+struct AnthropicClassificationProvider: AIClassificationProvider {
+    let kind: AIProviderKind = .anthropic
+    private let endpoint: URL
+    private let model: String
+    private let secretStore: AISecretStore
+    private let transport: AITransport
+    private let parser = ClassificationResponseParser()
+
+    init(
+        endpoint: URL = AIProviderKind.anthropic.defaultEndpoint,
+        model: String = AIProviderKind.anthropic.defaultModel,
+        secretStore: AISecretStore,
+        transport: @escaping AITransport = defaultAITransport
+    ) {
+        self.endpoint = endpoint
+        self.model = model
+        self.secretStore = secretStore
+        self.transport = transport
+    }
+
+    var isConfigured: Bool { secretStore.secret(for: kind.keychainAccount)?.isUsable == true }
+
+    func validateConnection() async throws {
+        _ = try await classify(MerchantClassificationRequest(merchantDescription: "TEST", availableCategoryNames: []))
+    }
+
+    func classify(_ request: MerchantClassificationRequest) async throws -> MerchantClassification {
+        guard let key = secretStore.secret(for: kind.keychainAccount)?.apiKey, !key.isEmpty else {
+            throw AIClassificationError.providerUnavailable
+        }
+
+        var urlRequest = URLRequest(url: endpoint)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(key, forHTTPHeaderField: "x-api-key")
+        urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "max_tokens": 300,
+            "system": AIClassificationPrompt.system(categories: request.availableCategoryNames),
+            "messages": [
+                ["role": "user", "content": AIClassificationPrompt.user(for: request)]
+            ]
+        ], options: [.sortedKeys])
+
+        let (data, response) = try await perform(urlRequest)
+        if let http = response as? HTTPURLResponse, let error = mapHTTPStatus(http.statusCode) { throw error }
+
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let contentBlocks = root["content"] as? [[String: Any]]
+        else {
+            throw AIClassificationError.invalidResponse("Unexpected Messages envelope.")
+        }
+        let text = contentBlocks.compactMap { $0["text"] as? String }.joined()
+        guard !text.isEmpty else {
+            throw AIClassificationError.invalidResponse("Messages response had no text content.")
+        }
+        return try parser.classification(fromContent: text, availableCategoryNames: request.availableCategoryNames)
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do { return try await transport(request) } catch { throw mapTransportError(error) }
     }
 }

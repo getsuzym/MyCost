@@ -11,7 +11,8 @@ struct MyCostApp: App {
                 Transaction.self,
                 Category.self,
                 MerchantRule.self,
-                RecurringPayment.self
+                RecurringPayment.self,
+                AIProviderConnection.self
             ])
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)

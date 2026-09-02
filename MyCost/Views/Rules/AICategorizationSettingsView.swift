@@ -1,112 +1,189 @@
+import SwiftData
 import SwiftUI
 
-/// Optional: lets the end user connect their *own* AI account for fallback
-/// categorization. The app has no built-in key — if this is left unconnected
-/// the feature simply stays off and categorization is fully manual/rule-based.
-struct AICategorizationSettingsView: View {
-    @EnvironmentObject private var aiController: AICategorizationController
+// (Filename kept for project stability; this is the AI Provider settings screen.)
+
+/// Choose an AI provider and connect it — or stay on "No AI", the default.
+/// Categorization works without any of this: user rules → local categorizer →
+/// (this, if connected) → manual / Uncategorized.
+struct AIProviderSettingsView: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var endpointText = "https://api.openai.com/v1/chat/completions"
+    @Query private var connections: [AIProviderConnection]
+
+    @State private var selection: ProviderSelection = .none
     @State private var apiKey = ""
-    @State private var model = "gpt-4o-mini"
-    @State private var errorMessage: String?
+    @State private var model = ""
+    @State private var statusMessage: String?
+    @State private var isBusy = false
+
+    private let service = AIProviderService()
+
+    private enum ProviderSelection: Hashable {
+        case none
+        case provider(AIProviderKind)
+    }
+
+    private var activeConnection: AIProviderConnection? {
+        service.activeConnection(in: connections)
+    }
 
     var body: some View {
         Form {
             Section {
-                if aiController.isConnected {
-                    LabeledContent("Status", value: "Connected")
-                        .foregroundStyle(.green)
-                    if let summary = aiController.connectionSummary {
-                        Text(summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Picker("AI Provider", selection: $selection) {
+                    Text("No AI — categorize manually").tag(ProviderSelection.none)
+                    ForEach(AIProviderKind.allCases) { kind in
+                        Text(kind.displayName).tag(ProviderSelection.provider(kind))
                     }
-                } else {
-                    LabeledContent("Status", value: "Not connected")
-                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("aiSettings.provider")
+                .onChange(of: selection) { _, _ in
+                    statusMessage = nil
+                    if case .provider(let kind) = selection, activeConnection?.provider != kind {
+                        model = kind.defaultModel
+                    }
                 }
             } footer: {
-                Text("When merchant rules can't categorize a transaction, MyCost can ask a connected AI service for a suggestion. Only the merchant description and amount are sent — no dates, accounts, notes, or balances. You review every suggestion before it is applied.")
+                Text("Default is No AI. Connecting a provider is optional and uses your own account.")
             }
 
-            Section("Connect your account") {
-                TextField("Endpoint URL", text: $endpointText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .accessibilityIdentifier("aiSettings.endpoint")
+            switch selection {
+            case .none:
+                Section {
+                    Label("Unknown transactions go to Uncategorized for you to categorize.",
+                          systemImage: "hand.point.up.left")
+                        .font(.callout)
+                }
+            case .provider(let kind):
+                providerSection(for: kind)
+            }
 
-                SecureField("API key", text: $apiKey)
+            privacySection
+
+            if let statusMessage {
+                Section { Text(statusMessage).foregroundStyle(statusMessage.hasPrefix("Connected") ? .green : .red) }
+            }
+        }
+        .navigationTitle("AI Provider")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+        .onAppear(perform: syncFromStore)
+    }
+
+    @ViewBuilder
+    private func providerSection(for kind: AIProviderKind) -> some View {
+        let isConnected = activeConnection?.provider == kind && activeConnection?.isConnected == true
+
+        Section("\(kind.displayName) — Access") {
+            if isConnected, let connection = activeConnection {
+                LabeledContent("Status") {
+                    Label("Connected", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                }
+                LabeledContent("Model", value: connection.model)
+                if let validated = connection.lastValidatedAt {
+                    LabeledContent("Last verified", value: validated.formatted(date: .abbreviated, time: .shortened))
+                }
+                Button("Test Connection") { Task { await testConnection(connection) } }
+                    .disabled(isBusy)
+                    .accessibilityIdentifier("aiSettings.test")
+                Button("Disconnect", role: .destructive) { disconnect(connection) }
+                    .disabled(isBusy)
+                    .accessibilityIdentifier("aiSettings.disconnect")
+            } else {
+                Text(unsupportedOAuthNote(for: kind))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Link("Create an API key", destination: kind.consoleURL)
+
+                SecureField("API key (advanced)", text: $apiKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("aiSettings.apiKey")
-
                 TextField("Model", text: $model)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("aiSettings.model")
 
-                Button("Save Connection", action: save)
-                    .accessibilityIdentifier("aiSettings.save")
-            }
-
-            if aiController.isConnected {
-                Section {
-                    Button("Disconnect", role: .destructive, action: disconnect)
-                        .accessibilityIdentifier("aiSettings.disconnect")
-                }
-            }
-
-            if let errorMessage {
-                Section {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
-            }
-        }
-        .navigationTitle("AI Categorization")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
+                Button("Connect") { Task { await connect(kind) } }
+                    .disabled(isBusy || apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityIdentifier("aiSettings.connect")
             }
         }
     }
 
-    private func save() {
-        errorMessage = nil
-        let trimmedEndpoint = endpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var privacySection: some View {
+        Section("Privacy") {
+            Text("When AI categorization runs, MyCost sends only the merchant description from a single transaction and, optionally, its amount, plus your category names. It never sends screenshots, account numbers, other transactions, or full statements. Suggestions are shown for your review; nothing is classified silently.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
 
-        guard let url = URL(string: trimmedEndpoint), url.scheme?.hasPrefix("http") == true else {
-            errorMessage = "Enter a valid https endpoint URL."
-            return
-        }
-        guard !trimmedKey.isEmpty else {
-            errorMessage = "Enter your API key."
-            return
-        }
-        guard !trimmedModel.isEmpty else {
-            errorMessage = "Enter a model name."
-            return
-        }
+    private func unsupportedOAuthNote(for kind: AIProviderKind) -> String {
+        "\(kind.displayName) does not offer a sign-in that grants API access to third-party apps — a \(kind == .openAI ? "ChatGPT Plus" : "Claude Pro") subscription is separate from API billing. Connect with your own API key, or leave AI off."
+    }
 
+    // MARK: Actions
+
+    private func syncFromStore() {
+        if let connection = activeConnection {
+            selection = .provider(connection.provider)
+            model = connection.model
+        } else {
+            selection = .none
+        }
+    }
+
+    private func connect(_ kind: AIProviderKind) async {
+        isBusy = true
+        statusMessage = nil
+        let endpoint = kind.defaultEndpoint
+        let chosenModel = model.trimmingCharacters(in: .whitespaces).isEmpty ? kind.defaultModel : model
         do {
-            try aiController.connect(endpointURL: url, apiKey: trimmedKey, model: trimmedModel)
+            try await service.connectWithAPIKey(
+                kind, apiKey: apiKey, model: chosenModel, endpoint: endpoint,
+                existing: connections, modelContext: modelContext
+            )
             apiKey = ""
-            dismiss()
+            statusMessage = "Connected to \(kind.displayName)."
         } catch {
-            errorMessage = "Could not save connection: \(error.localizedDescription)"
+            statusMessage = message(for: error)
+        }
+        isBusy = false
+    }
+
+    private func testConnection(_ connection: AIProviderConnection) async {
+        isBusy = true
+        statusMessage = nil
+        do {
+            try await service.testConnection(connection, modelContext: modelContext)
+            statusMessage = "Connected — credentials verified."
+        } catch {
+            statusMessage = message(for: error)
+        }
+        isBusy = false
+    }
+
+    private func disconnect(_ connection: AIProviderConnection) {
+        do {
+            try service.disconnect(connection, existing: connections, modelContext: modelContext)
+            statusMessage = "Disconnected. To fully revoke access, delete the key in your \(connection.provider.displayName) account."
+        } catch {
+            statusMessage = message(for: error)
         }
     }
 
-    private func disconnect() {
-        errorMessage = nil
-        do {
-            try aiController.disconnect()
-        } catch {
-            errorMessage = "Could not disconnect: \(error.localizedDescription)"
+    private func message(for error: Error) -> String {
+        switch error as? AIClassificationError {
+        case .credentialsExpired: "That key was rejected. Check it and try again."
+        case .providerUnavailable: "Enter a valid API key."
+        case .network(let detail): "Couldn't reach the provider (\(detail))."
+        case .invalidResponse: "The provider responded in an unexpected format."
+        default: "Connection failed: \(error.localizedDescription)"
         }
     }
 }

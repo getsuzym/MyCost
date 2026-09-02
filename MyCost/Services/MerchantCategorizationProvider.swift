@@ -1,13 +1,85 @@
 import Foundation
 
-/// Minimal, provider-agnostic input for an AI categorization request.
-///
-/// Only merchant text and (optionally) the amount are ever sent to an AI
-/// service. No dates, account names, notes, balances, running totals, or any
-/// other financial data are included. `availableCategoryNames` is the fixed
-/// label space the model must choose from — it contains only the user's
-/// category names (e.g. "Groceries"), never transaction data.
-struct MerchantCategorizationRequest: Equatable {
+// MARK: - Provider identity
+
+/// The AI vendors MyCost can talk to. Categorization is written against
+/// ``AIClassificationProvider``, never a concrete vendor, so more can be added
+/// (or all removed) without touching callers.
+enum AIProviderKind: String, CaseIterable, Codable, Sendable, Identifiable {
+    case openAI
+    case anthropic
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .openAI: "ChatGPT (OpenAI)"
+        case .anthropic: "Claude (Anthropic)"
+        }
+    }
+
+    /// Where the user creates the key this app will use.
+    var consoleURL: URL {
+        switch self {
+        case .openAI: URL(string: "https://platform.openai.com/api-keys")!
+        case .anthropic: URL(string: "https://console.anthropic.com/settings/keys")!
+        }
+    }
+
+    var defaultEndpoint: URL {
+        switch self {
+        case .openAI: URL(string: "https://api.openai.com/v1/chat/completions")!
+        case .anthropic: URL(string: "https://api.anthropic.com/v1/messages")!
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .openAI: "gpt-4o-mini"
+        case .anthropic: "claude-haiku-4-5"
+        }
+    }
+
+    /// Officially supported authentication for a third-party iOS app to obtain
+    /// **model/API** access on the user's own billing.
+    ///
+    /// As of this writing neither vendor offers OAuth / "connect your account"
+    /// that grants Chat Completions / Messages access to third-party apps —
+    /// consumer ChatGPT Plus and Claude Pro logins provide identity only, not
+    /// API authorization or billing. So the only supported mechanism is the
+    /// user's own API key, entered as an advanced setting. If a vendor ships a
+    /// real OAuth grant later, add `.oauth` here and a concrete flow.
+    var supportedAuthTypes: [AIAuthType] {
+        [.apiKey]
+    }
+
+    var capabilities: Set<AICapability> {
+        [.merchantCategorization]
+    }
+
+    /// Keychain account string for this provider's secret.
+    var keychainAccount: String { "ai-provider.\(rawValue)" }
+}
+
+enum AIAuthType: String, Codable, Sendable {
+    /// User-supplied API key, stored in Keychain.
+    case apiKey
+    /// Reserved for a future official OAuth grant (ASWebAuthenticationSession +
+    /// PKCE + refresh). Not currently offered by either vendor.
+    case oauth
+}
+
+enum AICapability: String, Codable, Sendable {
+    case merchantCategorization
+}
+
+// MARK: - Request / response
+
+/// The *only* transaction information that leaves the device for classification:
+/// the merchant description and, optionally, the amount, plus the user's own
+/// category names as the label space. Structurally cannot carry screenshots,
+/// account numbers, other transactions, or statements.
+struct MerchantClassificationRequest: Equatable {
     let merchantDescription: String
     let amount: Decimal?
     let availableCategoryNames: [String]
@@ -19,48 +91,41 @@ struct MerchantCategorizationRequest: Equatable {
     }
 }
 
-/// A single AI categorization result. `categoryName`, when non-nil, is
-/// guaranteed to match one of the request's `availableCategoryNames`
-/// (case-insensitively, returned in the canonical casing). `confidence` is
-/// clamped to `0...1`.
-struct MerchantCategorizationSuggestion: Equatable {
+/// The strict structured result a provider must return. `suggestedCategory`, if
+/// non-nil, is guaranteed to be one of the request's `availableCategoryNames`
+/// (canonical casing). `confidence` is clamped to `0...1`.
+struct MerchantClassification: Equatable {
     let normalizedMerchantName: String
-    let categoryName: String?
+    let suggestedCategory: String?
     let confidence: Double
+    let reasoningSummary: String?
 }
 
-enum MerchantCategorizationError: Error, Equatable {
-    /// The end user has not connected an AI service/account.
+enum AIClassificationError: Error, Equatable {
+    /// No provider is connected.
     case notConfigured
-    /// The request could not be completed (offline, timeout, HTTP error…).
+    /// A provider is selected but its stored credentials are missing/removed.
+    case providerUnavailable
+    /// Credentials are present but rejected (401/403) — reconnect needed.
+    case credentialsExpired
+    /// The user cancelled an interactive auth step.
+    case authenticationCancelled
+    /// Transport failure (offline, timeout, 5xx, rate limit…).
     case network(String)
     /// A response came back but could not be understood or trusted.
     case invalidResponse(String)
-    /// The request was cancelled before completing.
     case cancelled
 }
 
-/// The single seam every AI categorization backend is reached through. Swap the
-/// concrete type, or use ``DisabledMerchantCategorizationProvider`` to turn the
-/// feature off, without touching callers.
-protocol MerchantCategorizationProviding: Sendable {
-    /// `true` only when the end user has connected their own AI account and a
-    /// request could plausibly be attempted.
+// MARK: - The seam
+
+protocol AIClassificationProvider: Sendable {
+    var kind: AIProviderKind { get }
+    /// `true` when a usable credential for this provider is available.
     var isConfigured: Bool { get }
 
-    func suggestCategorization(
-        for request: MerchantCategorizationRequest
-    ) async throws -> MerchantCategorizationSuggestion
-}
+    /// Lightweight round-trip used by the settings screen's "Test Connection".
+    func validateConnection() async throws
 
-/// Default provider when nothing is connected: always unconfigured, always
-/// fails with `.notConfigured`. Keeps the rest of the app AI-agnostic.
-struct DisabledMerchantCategorizationProvider: MerchantCategorizationProviding {
-    var isConfigured: Bool { false }
-
-    func suggestCategorization(
-        for request: MerchantCategorizationRequest
-    ) async throws -> MerchantCategorizationSuggestion {
-        throw MerchantCategorizationError.notConfigured
-    }
+    func classify(_ request: MerchantClassificationRequest) async throws -> MerchantClassification
 }

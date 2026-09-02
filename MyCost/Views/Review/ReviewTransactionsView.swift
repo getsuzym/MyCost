@@ -4,24 +4,29 @@ import SwiftUI
 /// Per-row state for the optional AI categorization fallback.
 enum AICategorizationRowState: Equatable {
     case loading
-    case suggestion(MerchantCategorizationSuggestion)
-    case lowConfidence(MerchantCategorizationSuggestion)
+    case suggestion(MerchantClassification)
+    case lowConfidence(MerchantClassification)
     case message(String)
 }
 
 struct ReviewTransactionsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
-    @EnvironmentObject private var aiController: AICategorizationController
 
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
+    @Query private var aiConnections: [AIProviderConnection]
 
     @State private var saveMessage: String?
     @State private var aiRowStates: [UUID: AICategorizationRowState] = [:]
     private let importCoordinator = OCRTransactionImportCoordinator()
     private let merchantRuleService = MerchantRuleService()
+    private let aiProviderService = AIProviderService()
+
+    private var isAIConnected: Bool {
+        aiProviderService.activeConnection(in: aiConnections) != nil
+    }
 
     private var possibleDuplicates: [Transaction] {
         transactions.filter { $0.duplicateState == .possibleDuplicate }
@@ -64,7 +69,7 @@ struct ReviewTransactionsView: View {
                         draft: $draft,
                         categories: categories,
                         aiState: aiRowStates[draft.id],
-                        canAskAI: aiController.isConnected,
+                        canAskAI: isAIConnected,
                         onRemove: {
                             ocrReviewStore.removeDraft(id: draft.id)
                             aiRowStates[draft.id] = nil
@@ -192,7 +197,7 @@ struct ReviewTransactionsView: View {
 
     private func askAI(for draftID: UUID) {
         guard let draft = ocrReviewStore.drafts.first(where: { $0.id == draftID }) else { return }
-        let coordinator = aiController.makeCoordinator()
+        let coordinator = aiProviderService.makeCoordinator(for: aiConnections)
         let description = draft.sourceText.isEmpty ? draft.trimmedMerchantName : draft.sourceText
         let amount = draft.parsedAmount
         let categoryNames = categories.map(\.name)
@@ -213,27 +218,31 @@ struct ReviewTransactionsView: View {
     private func handle(_ outcome: MerchantCategorizationCoordinator.Outcome, for draftID: UUID) {
         switch outcome {
         case let .ruleMatch(displayName, categoryName, _):
-            // A rule was added since import — apply it directly, no confirmation needed.
+            // A rule was added since import — apply directly, no confirmation.
             ocrReviewStore.applyCategorization(
-                to: draftID,
-                merchantName: displayName,
-                categoryID: categoryID(named: categoryName)
+                to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName)
             )
             aiRowStates[draftID] = nil
-        case let .aiSuggestion(suggestion):
-            aiRowStates[draftID] = .suggestion(suggestion)
-        case let .lowConfidence(suggestion):
-            aiRowStates[draftID] = .lowConfidence(suggestion)
+        case let .localMatch(displayName, categoryName):
+            // Deterministic local match — safe to apply without AI or confirmation.
+            ocrReviewStore.applyCategorization(
+                to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName)
+            )
+            aiRowStates[draftID] = nil
+        case let .aiSuggestion(classification):
+            aiRowStates[draftID] = .suggestion(classification)
+        case let .lowConfidence(classification):
+            aiRowStates[draftID] = .lowConfidence(classification)
         case let .unresolved(reason):
             aiRowStates[draftID] = .message(message(for: reason))
         }
     }
 
-    private func acceptSuggestion(_ suggestion: MerchantCategorizationSuggestion, for draftID: UUID) {
+    private func acceptSuggestion(_ classification: MerchantClassification, for draftID: UUID) {
         ocrReviewStore.applyCategorization(
             to: draftID,
-            merchantName: suggestion.normalizedMerchantName,
-            categoryID: categoryID(named: suggestion.categoryName)
+            merchantName: classification.normalizedMerchantName,
+            categoryID: categoryID(named: classification.suggestedCategory)
         )
         aiRowStates[draftID] = nil
     }
@@ -246,7 +255,11 @@ struct ReviewTransactionsView: View {
     private func message(for reason: MerchantCategorizationCoordinator.UnresolvedReason) -> String {
         switch reason {
         case .notConfigured:
-            return "Connect an AI service in Merchant Rules → AI Categorization to get suggestions."
+            return "Connect an AI provider in Merchant Rules → AI Provider, or categorize manually."
+        case .providerUnavailable:
+            return "The connected AI provider has no valid key. Reconnect it in settings."
+        case .credentialsExpired:
+            return "The AI provider rejected the saved key. Reconnect it in settings."
         case .requestFailed(let detail):
             return "AI suggestion unavailable (\(detail)). Categorize manually."
         case .invalidResponse:
@@ -263,7 +276,7 @@ private struct OCRTransactionDraftRow: View {
     let canAskAI: Bool
     let onRemove: () -> Void
     let onAskAI: () -> Void
-    let onAcceptSuggestion: (MerchantCategorizationSuggestion) -> Void
+    let onAcceptSuggestion: (MerchantClassification) -> Void
     let onDismissAI: () -> Void
 
     var body: some View {
@@ -370,7 +383,7 @@ private struct OCRTransactionDraftRow: View {
                 .accessibilityIdentifier("review.askAI")
 
                 if !canAskAI {
-                    Text("Connect an AI service in Merchant Rules → AI Categorization.")
+                    Text("Connect an AI provider in Merchant Rules → AI Provider.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -380,10 +393,10 @@ private struct OCRTransactionDraftRow: View {
                 ProgressView()
                 Text("Asking AI…").font(.caption).foregroundStyle(.secondary)
             }
-        case let .suggestion(suggestion):
-            suggestionBanner(suggestion, isConfident: true)
-        case let .lowConfidence(suggestion):
-            suggestionBanner(suggestion, isConfident: false)
+        case let .suggestion(classification):
+            suggestionBanner(classification, isConfident: true)
+        case let .lowConfidence(classification):
+            suggestionBanner(classification, isConfident: false)
         case let .message(text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(text).font(.caption).foregroundStyle(.secondary)
@@ -396,23 +409,29 @@ private struct OCRTransactionDraftRow: View {
     }
 
     @ViewBuilder
-    private func suggestionBanner(_ suggestion: MerchantCategorizationSuggestion, isConfident: Bool) -> some View {
+    private func suggestionBanner(_ classification: MerchantClassification, isConfident: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(
-                isConfident ? "AI suggestion" : "AI suggestion (low confidence)",
-                systemImage: isConfident ? "sparkles" : "questionmark.circle"
+                isConfident ? "AI suggestion" : "AI suggestion — low confidence, review",
+                systemImage: isConfident ? "sparkles" : "exclamationmark.triangle"
             )
             .font(.caption)
             .foregroundStyle(isConfident ? Color.accentColor : .orange)
 
-            Text("\(suggestion.normalizedMerchantName)\(suggestion.categoryName.map { " · \($0)" } ?? "") — \(Int((suggestion.confidence * 100).rounded()))%")
+            Text("\(classification.normalizedMerchantName)\(classification.suggestedCategory.map { " · \($0)" } ?? "") — \(Int((classification.confidence * 100).rounded()))%")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("review.aiSuggestionText")
 
+            if let reasoning = classification.reasoningSummary {
+                Text(reasoning)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Button(isConfident ? "Use" : "Use anyway") {
-                    onAcceptSuggestion(suggestion)
+                    onAcceptSuggestion(classification)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("review.aiUseSuggestion")

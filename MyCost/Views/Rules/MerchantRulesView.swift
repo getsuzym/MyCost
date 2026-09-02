@@ -4,8 +4,6 @@ import SwiftUI
 struct MerchantRulesView: View {
     @Environment(\.modelContext) private var modelContext
 
-    @EnvironmentObject private var aiController: AICategorizationController
-
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
 
@@ -44,7 +42,7 @@ struct MerchantRulesView: View {
                 Button {
                     isShowingAISettings = true
                 } label: {
-                    Label("AI Categorization", systemImage: "sparkles")
+                    Label("AI Provider", systemImage: "sparkles")
                 }
                 .accessibilityIdentifier("merchantRules.aiSettings")
             }
@@ -61,9 +59,8 @@ struct MerchantRulesView: View {
         }
         .sheet(isPresented: $isShowingAISettings) {
             NavigationStack {
-                AICategorizationSettingsView()
+                AIProviderSettingsView()
             }
-            .environmentObject(aiController)
         }
     }
 
