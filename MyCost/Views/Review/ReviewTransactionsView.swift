@@ -306,8 +306,8 @@ private struct OCRTransactionDraftRow: View {
 
             Picker("Category", selection: $draft.selectedCategoryID) {
                 Text("Uncategorized").tag(UUID?.none)
-                ForEach(categories) { category in
-                    Label(category.name, systemImage: category.symbolName)
+                ForEach(categories.filter { $0.isActive || $0.id == draft.selectedCategoryID }) { category in
+                    Label(category.name, systemImage: category.symbolName.isEmpty ? "tag" : category.symbolName)
                         .tag(Optional(category.id))
                 }
             }

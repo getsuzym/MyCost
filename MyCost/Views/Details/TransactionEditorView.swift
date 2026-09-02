@@ -37,6 +37,12 @@ struct TransactionEditorView: View {
     private let merchantRuleService = MerchantRuleService()
     private let recurringSuggestionService = RecurringPaymentSuggestionService()
 
+    /// Active categories plus, when editing, whichever hidden category is
+    /// currently assigned so it stays visible until changed.
+    private var visibleCategories: [Category] {
+        categories.filter { $0.isActive || $0.id == selectedCategoryID }
+    }
+
     private var title: String {
         switch mode {
         case .add: "Add Transaction"
@@ -71,8 +77,8 @@ struct TransactionEditorView: View {
             Section("Category") {
                 Picker("Category", selection: $selectedCategoryID) {
                     Text("Uncategorized").tag(UUID?.none)
-                    ForEach(categories) { category in
-                        Label(category.name, systemImage: category.symbolName)
+                    ForEach(visibleCategories) { category in
+                        Label(category.name, systemImage: category.symbolName.isEmpty ? "tag" : category.symbolName)
                             .tag(Optional(category.id))
                     }
                 }

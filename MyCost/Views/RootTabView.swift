@@ -42,6 +42,14 @@ struct RootTabView: View {
             }
 
             NavigationStack {
+                CategoryManagementView()
+            }
+            .tabItem {
+                Label("Categories", systemImage: "folder")
+            }
+            .accessibilityIdentifier("tab.categories")
+
+            NavigationStack {
                 RecurringPaymentsView()
             }
             .tabItem {

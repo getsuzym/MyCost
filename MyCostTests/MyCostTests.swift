@@ -725,6 +725,243 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.nonRecurringTotal, -12)
     }
 
+    // MARK: - Category management
+
+    private func makeCategory(
+        _ name: String,
+        sortOrder: Int = 0,
+        isFallback: Bool = false,
+        isActive: Bool = true
+    ) -> MyCost.Category {
+        let category = Category(
+            name: name, colorHex: "#123456", symbolName: "tag",
+            sortOrder: sortOrder, isActive: isActive, isFallback: isFallback
+        )
+        context.insert(category)
+        return category
+    }
+
+    private func fetchCategories() throws -> [MyCost.Category] {
+        try context.fetch(FetchDescriptor<MyCost.Category>(sortBy: [SortDescriptor(\.sortOrder)]))
+    }
+
+    func testCreateCategoryTrimsNameAndAssignsNextSortOrder() throws {
+        _ = makeCategory("Groceries", sortOrder: 0)
+        _ = makeCategory("Dining", sortOrder: 1)
+        try context.save()
+
+        let created = try CategoryService().createCategory(
+            name: "  Travel  ", symbolName: "airplane", colorHex: "#000000",
+            in: try fetchCategories(), modelContext: context
+        )
+
+        XCTAssertEqual(created.name, "Travel")
+        XCTAssertEqual(created.sortOrder, 2)
+    }
+
+    func testCreateCategoryRejectsEmptyName() throws {
+        try context.save()
+        XCTAssertThrowsError(
+            try CategoryService().createCategory(
+                name: "   ", symbolName: "tag", colorHex: "#000000",
+                in: try fetchCategories(), modelContext: context
+            )
+        ) { XCTAssertEqual($0 as? CategoryError, .emptyName) }
+    }
+
+    func testCategoryNamesAreUniqueAfterTrimAndCaseFold() throws {
+        _ = makeCategory("Groceries", sortOrder: 0)
+        try context.save()
+
+        XCTAssertThrowsError(
+            try CategoryService().createCategory(
+                name: "  groceries ", symbolName: "tag", colorHex: "#000000",
+                in: try fetchCategories(), modelContext: context
+            )
+        ) { XCTAssertEqual($0 as? CategoryError, .duplicateName("groceries")) }
+    }
+
+    func testRenameCategoryAllowsRecasingItsOwnNameButNotColliding() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        _ = makeCategory("Dining", sortOrder: 1)
+        try context.save()
+        let service = CategoryService()
+
+        try service.updateCategory(
+            groceries, name: "groceries", symbolName: "cart", colorHex: "#111111",
+            in: try fetchCategories(), modelContext: context
+        )
+        XCTAssertEqual(groceries.name, "groceries")
+
+        XCTAssertThrowsError(
+            try service.updateCategory(
+                groceries, name: "Dining", symbolName: "cart", colorHex: "#111111",
+                in: try fetchCategories(), modelContext: context
+            )
+        )
+    }
+
+    func testDeleteUnusedCategoryRemovesIt() throws {
+        let travel = makeCategory("Travel", sortOrder: 0)
+        try context.save()
+
+        try CategoryService().deleteCategory(
+            travel, reassigningTo: nil,
+            transactions: [], merchantRules: [], recurringPayments: [],
+            modelContext: context
+        )
+
+        XCTAssertTrue(try fetchCategories().isEmpty)
+    }
+
+    func testReferenceCountsForCategoryInUse() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let t1 = Transaction(merchantName: "Cafe", amount: 5, transactionDate: date(2026, 8, 1), category: dining)
+        let t2 = Transaction(merchantName: "Bistro", amount: 9, transactionDate: date(2026, 8, 2), category: dining)
+        let t3 = Transaction(merchantName: "Market", amount: 20, transactionDate: date(2026, 8, 3), category: groceries)
+        let rule = MerchantRule(matchText: "Cafe Bar", displayName: "Cafe", category: dining)
+        let recurring = RecurringPayment(merchantName: "Meal Kit", expectedAmount: 60, frequency: .monthly, category: dining)
+        [t1, t2, t3].forEach(context.insert)
+        context.insert(rule)
+        context.insert(recurring)
+        try context.save()
+
+        let counts = CategoryService().referenceCounts(
+            for: dining,
+            transactions: [t1, t2, t3],
+            merchantRules: [rule],
+            recurringPayments: [recurring]
+        )
+
+        XCTAssertEqual(counts.transactions, 2)
+        XCTAssertEqual(counts.merchantRules, 1)
+        XCTAssertEqual(counts.recurringPayments, 1)
+        XCTAssertTrue(counts.isInUse)
+    }
+
+    func testDeleteCategoryInUseReassignsEveryReference() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let t1 = Transaction(merchantName: "Cafe", amount: 5, transactionDate: date(2026, 8, 1), category: dining)
+        let t2 = Transaction(merchantName: "Bistro", amount: 9, transactionDate: date(2026, 8, 2), category: dining)
+        let rule = MerchantRule(matchText: "Cafe Bar", displayName: "Cafe", category: dining)
+        let recurring = RecurringPayment(merchantName: "Meal Kit", expectedAmount: 60, frequency: .monthly, category: dining)
+        [t1, t2].forEach(context.insert)
+        context.insert(rule)
+        context.insert(recurring)
+        try context.save()
+
+        try CategoryService().deleteCategory(
+            dining, reassigningTo: groceries,
+            transactions: [t1, t2], merchantRules: [rule], recurringPayments: [recurring],
+            modelContext: context
+        )
+
+        XCTAssertEqual(t1.category?.id, groceries.id)
+        XCTAssertEqual(t2.category?.id, groceries.id)
+        XCTAssertEqual(rule.category?.id, groceries.id)
+        XCTAssertEqual(recurring.category?.id, groceries.id)
+        XCTAssertEqual(try fetchCategories().map(\.name), ["Groceries"])
+    }
+
+    func testDeleteCategoryInUseWithoutTargetClearsReferences() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let transaction = Transaction(merchantName: "Cafe", amount: 5, transactionDate: date(2026, 8, 1), category: dining)
+        context.insert(transaction)
+        try context.save()
+
+        try CategoryService().deleteCategory(
+            dining, reassigningTo: nil,
+            transactions: [transaction], merchantRules: [], recurringPayments: [],
+            modelContext: context
+        )
+
+        XCTAssertNil(transaction.category)
+    }
+
+    func testCannotDeleteOrHideFallbackCategory() throws {
+        let fallback = makeCategory("Uncategorized", sortOrder: 0, isFallback: true)
+        try context.save()
+        let service = CategoryService()
+
+        XCTAssertThrowsError(
+            try service.deleteCategory(
+                fallback, reassigningTo: nil,
+                transactions: [], merchantRules: [], recurringPayments: [],
+                modelContext: context
+            )
+        ) { XCTAssertEqual($0 as? CategoryError, .cannotDeleteFallback) }
+
+        XCTAssertThrowsError(
+            try service.setActive(fallback, false, modelContext: context)
+        ) { XCTAssertEqual($0 as? CategoryError, .cannotHideFallback) }
+        XCTAssertTrue(fallback.isActive)
+    }
+
+    func testReorderAssignsSequentialSortOrder() throws {
+        let a = makeCategory("A", sortOrder: 0)
+        let b = makeCategory("B", sortOrder: 1)
+        let c = makeCategory("C", sortOrder: 2)
+        try context.save()
+
+        CategoryService().reorder([c, a, b], modelContext: context)
+
+        XCTAssertEqual(c.sortOrder, 0)
+        XCTAssertEqual(a.sortOrder, 1)
+        XCTAssertEqual(b.sortOrder, 2)
+    }
+
+    func testEnsureFallbackCreatesUncategorizedWhenMissingAndAdoptsItWhenPresent() throws {
+        try context.save()
+        let service = CategoryService()
+
+        let created = service.ensureFallbackCategory(in: try fetchCategories(), modelContext: context)
+        XCTAssertEqual(created.name, "Uncategorized")
+        XCTAssertTrue(created.isFallback)
+
+        // Idempotent — a second call returns the same one, not a duplicate.
+        let again = service.ensureFallbackCategory(in: try fetchCategories(), modelContext: context)
+        XCTAssertEqual(again.id, created.id)
+        XCTAssertEqual(try fetchCategories().filter { $0.isFallback }.count, 1)
+    }
+
+    func testDashboardTotalsFollowCategoryRename() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let transaction = Transaction(merchantName: "Cafe", amount: 30, transactionDate: date(2026, 8, 10), category: dining)
+        context.insert(transaction)
+        try context.save()
+
+        try CategoryService().updateCategory(
+            dining, name: "Eating Out", symbolName: "fork.knife", colorHex: "#123456",
+            in: try fetchCategories(), modelContext: context
+        )
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: [transaction])
+        XCTAssertEqual(summary.categoryTotals.first?.categoryName, "Eating Out")
+        XCTAssertEqual(summary.categoryTotals.first?.amount, 30)
+    }
+
+    func testDashboardTotalsFollowReassignmentWhenCategoryDeleted() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let diningTx = Transaction(merchantName: "Cafe", amount: 40, transactionDate: date(2026, 8, 5), category: dining)
+        let groceryTx = Transaction(merchantName: "Market", amount: 60, transactionDate: date(2026, 8, 6), category: groceries)
+        [diningTx, groceryTx].forEach(context.insert)
+        try context.save()
+
+        try CategoryService().deleteCategory(
+            dining, reassigningTo: groceries,
+            transactions: [diningTx, groceryTx], merchantRules: [], recurringPayments: [],
+            modelContext: context
+        )
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: [diningTx, groceryTx])
+        XCTAssertEqual(summary.categoryTotals.count, 1)
+        XCTAssertEqual(summary.categoryTotals.first?.categoryName, "Groceries")
+        XCTAssertEqual(summary.categoryTotals.first?.amount, 100)
+    }
+
     // MARK: - Spatial transaction grouping
 
     /// Build a normalized OCR observation (top-left origin, y down).

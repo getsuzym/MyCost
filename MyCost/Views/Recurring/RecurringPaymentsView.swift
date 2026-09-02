@@ -217,6 +217,10 @@ private struct RecurringPaymentEditorView: View {
 
     private let suggestionService = RecurringPaymentSuggestionService()
 
+    private var visibleCategories: [Category] {
+        categories.filter { $0.isActive || $0.id == selectedCategoryID }
+    }
+
     var body: some View {
         Form {
             Section("Series") {
@@ -239,8 +243,8 @@ private struct RecurringPaymentEditorView: View {
 
                 Picker("Category", selection: $selectedCategoryID) {
                     Text("No category").tag(UUID?.none)
-                    ForEach(categories) { category in
-                        Label(category.name, systemImage: category.symbolName)
+                    ForEach(visibleCategories) { category in
+                        Label(category.name, systemImage: category.symbolName.isEmpty ? "tag" : category.symbolName)
                             .tag(Optional(category.id))
                     }
                 }

@@ -74,6 +74,12 @@ Deterministic merchant rules stay first priority; the AI provider is consulted *
 - On confirm/correct, `MerchantRuleService.learnRule(...)` create-or-updates a `MerchantRule` (dedup by normalized key) so the same merchant resolves locally next time. In the Review flow this runs through the existing `shouldRememberMerchantRule` → save path.
 - UI: `AICategorizationController` (env object from `RootTabView`) owns connection state; connect/disconnect via `AICategorizationSettingsView` (sheet from `MerchantRulesView`). `ReviewTransactionsView` shows an "Ask AI" affordance per uncategorized draft and a confirm/dismiss banner.
 
+### Categories — `CategoryService` + `CategoryManagementView`
+
+Categories are dynamic SwiftData records, not a fixed list. `Category` has `isActive` (hidden categories stay on existing transactions but drop out of pickers) and `isFallback` (the single protected "Uncategorized"). `Category.defaults` seeds 8 including the fallback; `SeedDataService` also calls `CategoryService.ensureFallbackCategory` on every launch so a fallback always exists.
+
+All mutations go through `CategoryService` (stateless, `@MainActor` for the write methods): name uniqueness is enforced case-insensitively after trimming; `deleteCategory(_:reassigningTo:transactions:merchantRules:recurringPayments:)` moves every reference to a chosen category or nil (→ Uncategorized) — never a silent drop — and refuses to delete/hide the fallback; `reorder` rewrites `sortOrder` from array order. `referenceCounts(for:…)` powers the "N transactions · M rules · K recurring" shown before a destructive delete in `CategoryManagementView` (the "Categories" tab). Category pickers in the transaction editor, merchant-rule editor, recurring-payment editor, and OCR review filter to `isActive || id == currentSelection`. `TransactionHistoryView` has a category filter. `SpendingAnalytics` already groups by `transaction.category?.name`, so dashboard totals follow renames and reassignments automatically.
+
 ### Recurring detection — `RecurringPaymentSuggestionService`
 
 Groups posted, non-excluded transactions by account + normalized merchant key (needs ≥ 2), infers frequency from clustering of day-intervals, tolerates skipped periods, and rejects groups with high amount variance or irregular cadence. `SpendingAnalytics` also uses it for expected-monthly-recurring totals.
