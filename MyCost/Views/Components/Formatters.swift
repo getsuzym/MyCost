@@ -24,5 +24,10 @@ enum Formatters {
     static func currencyString(for amount: Decimal) -> String {
         currency.string(from: amount as NSDecimalNumber) ?? "$0.00"
     }
+
+    /// A whole-number percent for display, e.g. `31%`. Rounds to nearest.
+    static func percentString(_ value: Double) -> String {
+        "\(Int(value.rounded()))%"
+    }
 }
 

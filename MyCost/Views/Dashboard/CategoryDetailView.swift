@@ -44,6 +44,15 @@ struct CategoryDetailView: View {
             .reduce(Decimal.zero) { $0 + $1.spendingAmount }
     }
 
+    /// This category's share of the month's eligible spending — the same number
+    /// shown on the Dashboard breakdown.
+    private var percentageOfMonth: Double {
+        SpendingAnalytics()
+            .monthlySummary(for: monthAnchor, transactions: allTransactions)
+            .categoryTotals.first { $0.categoryName == categoryName }?
+            .percentageOfTotal ?? 0
+    }
+
     private var addCategoryID: UUID? {
         categories.first { $0.name == categoryName }?.id
     }
@@ -69,7 +78,7 @@ struct CategoryDetailView: View {
                     Text(Formatters.currencyString(for: categoryTotal))
                         .font(.largeTitle.bold())
                         .accessibilityIdentifier("categoryDetail.total")
-                    Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s")")
+                    Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s") · \(Formatters.percentString(percentageOfMonth)) of \(Formatters.month.string(from: monthAnchor)) spending")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

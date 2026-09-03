@@ -92,11 +92,19 @@ Operates on `DuplicateTransactionSnapshot` value types (not `Transaction`) so it
 
 ### Merchant normalization & rules — `MerchantRuleService.swift`
 
-`MerchantRuleNormalizer.normalizedMerchantKey(for:)` strips processor prefixes (`SQ*`, `PAYPAL*`, `AMZN MKTP`…), store/ref/auth numbers, `#` codes, and trailing `STATE ZIP`, yielding an uppercase key. `MerchantRuleService.bestRule` scores an exact normalized-key match highest, then a rule whose (≥2) normalized tokens are a subset of the description's tokens; ties break by rule specificity then recency. Rules and the normalized key are also stored on `MerchantRule` model instances.
+`MerchantRuleNormalizer.normalizedMerchantKey(for:)` strips processor prefixes (`SQ*`, `PAYPAL*`, `AMZN MKTP`…), store/ref/auth numbers, `#` codes, and trailing `STATE ZIP`, yielding an uppercase key. `caseFolded(_:)` is the lighter form (lowercase, whitespace-collapsed, trimmed) all match-type comparisons run in.
+
+**`MerchantRule` has a `matchType`** ∈ `exact` / `startsWith` / `endsWith` / `contains` (defaulted `.exact` — lightweight migration) plus a `priority: Int` (defaulted 0). `normalizedMerchantName` / `isActive` are aliases over the stored `displayName` / `isEnabled`. `MerchantRuleService.matches(_:merchantName:originalDescription:)` tests the `caseFolded` `matchText` against **both** the merchant name and the bank's original description with the chosen operator; `.exact` additionally keeps the legacy normalized-key-equality and ≥2-token-subset fallback so pre-`matchType` rules still resolve.
+
+**Conflict order in `bestRule`**: `priority` (higher wins outright) → match specificity (`exact` 3 > `startsWith`/`endsWith` 2 > `contains` 1) → longer `matchText` → most recently updated. So a broad `contains` never beats a more specific user rule unless the user raised its `priority`. Substring types require ≥3 chars (`matchType.minimumMatchTextLength`); the rule editor enforces it.
+
+`MerchantRulesView` is the management screen: add/edit/delete, enable/disable (swipe), match-type picker, priority stepper, resulting merchant name + category, and a live "Matches / No match" preview against an example description. `learnRule(…, matchType:)` create-or-updates by `(caseFolded matchText, matchType)` — no duplicates. The transaction editor's "Remember merchant change?" offers **"Apply to transactions containing '<name>'"** (a `.contains` rule keyed on the new merchant name) or **"Apply to this exact merchant"** (`.exact` on the original description). OCR-import learning stays `.exact`.
 
 ### Analytics — `SpendingAnalytics.monthlySummary`
 
 Pure function over `[Transaction]`. Includes only current-month, non-excluded rows **that `countsAsSpending`**, and sums each row's **`spendingAmount`** (account-type-normalized), not the raw bank `amount`. So credit-card payments and payroll deposits contribute 0; a refund's negative `normalizedAmount` still lowers the total; category totals, posted/pending, and recurring splits all use `spendingAmount`. Legacy rows that never went through `TransactionNormalizer` have `transactionDirection == .unknown` and `spendingAmount` falls back to `amount`.
+
+**`CategorySpend` carries `percentageOfTotal`** = `amount / summary.total × 100` (the denominator is the same eligible monthly spending; `0` when the month has none; a net-refund category can be negative). `categoryTotals` stays sorted by `amount` descending. Because every screen recomputes the summary from a `@Query` array each `body`, percentages update immediately on add / delete / amount / category / exclude / direction / refund changes. `DashboardView`'s Categories section shows a native `Charts` `BarMark` distribution (`SpendingDistributionChart`, positive categories only) plus a `CategoryBreakdownRow` per category — name, `Formatters.currencyString`, and `Formatters.percentString` all as text (VoiceOver-combined) — each a `NavigationLink` to `CategoryDetailView`, which also shows the category's "% of month" in its header.
 
 ### Account type awareness & amount normalization — `Account` + `TransactionNormalizer`
 

@@ -1,3 +1,4 @@
+import Charts
 import SwiftData
 import SwiftUI
 
@@ -128,15 +129,19 @@ struct DashboardView: View {
                     Text("No spending this month")
                         .foregroundStyle(.secondary)
                 }
+
+                if !summary.categoryTotals.isEmpty {
+                    SpendingDistributionChart(categories: summary.categoryTotals)
+                        .frame(height: 170)
+                        .padding(.vertical, 4)
+                        .accessibilityIdentifier("dashboard.categoryChart")
+                }
+
                 ForEach(summary.categoryTotals) { categoryTotal in
                     NavigationLink {
                         CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
                     } label: {
-                        MetricRow(
-                            title: categoryTotal.categoryName,
-                            value: Formatters.currencyString(for: categoryTotal.amount),
-                            systemImage: "tag"
-                        )
+                        CategoryBreakdownRow(category: categoryTotal)
                     }
                     .accessibilityIdentifier("dashboard.category")
                 }
@@ -177,6 +182,62 @@ private struct MetricRow: View {
             Text(value)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+/// Category name · amount spent · percentage of eligible monthly spending.
+/// All three stay visible as text (VoiceOver-friendly); the chart above is
+/// supplementary.
+private struct CategoryBreakdownRow: View {
+    let category: CategorySpend
+
+    var body: some View {
+        HStack {
+            Label(category.categoryName, systemImage: "tag")
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(Formatters.currencyString(for: category.amount))
+                Text(Formatters.percentString(category.percentageOfTotal))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(category.categoryName), \(Formatters.currencyString(for: category.amount)), \(Formatters.percentString(category.percentageOfTotal)) of spending")
+    }
+}
+
+/// Native SwiftUI bar chart of category spending. Only positive-amount
+/// categories get a bar; the full list (including net-refund categories) stays
+/// in the text rows below.
+private struct SpendingDistributionChart: View {
+    let categories: [CategorySpend]
+
+    private var barData: [CategorySpend] {
+        categories.filter { $0.amount > 0 }
+    }
+
+    var body: some View {
+        if barData.isEmpty {
+            Text("No positive spending to chart this month.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Chart(barData) { category in
+                BarMark(
+                    x: .value("Amount", NSDecimalNumber(decimal: category.amount).doubleValue),
+                    y: .value("Category", category.categoryName)
+                )
+                .foregroundStyle(by: .value("Category", category.categoryName))
+                .annotation(position: .trailing, alignment: .leading) {
+                    Text(Formatters.percentString(category.percentageOfTotal))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartLegend(.hidden)
+            .chartXAxis(.hidden)
         }
     }
 }

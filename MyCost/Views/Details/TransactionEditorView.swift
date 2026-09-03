@@ -205,8 +205,13 @@ struct TransactionEditorView: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("Remember") {
-                rememberPendingMerchantChange()
+            if let prompt = pendingMerchantLearning {
+                Button("Apply to transactions containing \u{201C}\(prompt.containsText)\u{201D}") {
+                    rememberPendingMerchantChange(matchType: .contains)
+                }
+                Button("Apply to this exact merchant") {
+                    rememberPendingMerchantChange(matchType: .exact)
+                }
             }
             Button("Only This Transaction") {
                 pendingMerchantLearning = nil
@@ -217,7 +222,7 @@ struct TransactionEditorView: View {
                 pendingMerchantLearning = nil
             }
         } message: {
-            Text("Save a rule for similar future transactions.")
+            Text("Save a rule so future transactions get this merchant name and category.")
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -365,7 +370,8 @@ struct TransactionEditorView: View {
 
             if originalMerchantName != trimmedMerchantName || originalCategoryID != selectedCategory?.id {
                 pendingMerchantLearning = MerchantLearningPrompt(
-                    matchText: transaction.originalDescription.isEmpty ? originalMerchantName : transaction.originalDescription,
+                    exactMatchText: transaction.originalDescription.isEmpty ? originalMerchantName : transaction.originalDescription,
+                    containsText: trimmedMerchantName,
                     displayName: trimmedMerchantName,
                     categoryID: selectedCategory?.id
                 )
@@ -487,13 +493,15 @@ struct TransactionEditorView: View {
         transaction.recurringPayment = recurringPayment
     }
 
-    private func rememberPendingMerchantChange() {
+    private func rememberPendingMerchantChange(matchType: MerchantRuleMatchType) {
         guard let pendingMerchantLearning else { return }
         let category = categories.first { $0.id == pendingMerchantLearning.categoryID }
-        merchantRuleService.rememberRule(
-            matchText: pendingMerchantLearning.matchText,
+        merchantRuleService.learnRule(
+            matchText: matchType == .contains ? pendingMerchantLearning.containsText : pendingMerchantLearning.exactMatchText,
             displayName: pendingMerchantLearning.displayName,
             category: category,
+            matchType: matchType,
+            existingRules: merchantRules,
             modelContext: modelContext
         )
         self.pendingMerchantLearning = nil
@@ -532,7 +540,11 @@ private struct ManualTransactionDraft {
 
 private struct MerchantLearningPrompt: Identifiable {
     let id = UUID()
-    let matchText: String
+    /// Used for an "exact merchant" rule — the original bank description.
+    let exactMatchText: String
+    /// Used for an "apply to transactions containing" rule — the short merchant
+    /// name the user entered.
+    let containsText: String
     let displayName: String
     let categoryID: UUID?
 }

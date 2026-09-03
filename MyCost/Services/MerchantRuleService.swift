@@ -48,56 +48,114 @@ enum MerchantRuleNormalizer {
         let digitCount = scalars.filter { CharacterSet.decimalDigits.contains($0) }.count
         return digitCount >= 3
     }
+
+    /// Lowercased, whitespace-collapsed, trimmed — the form all match-type
+    /// comparisons happen in.
+    static func caseFolded(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
 }
 
 struct MerchantRuleService {
-    func bestRule(for rawDescription: String, rules: [MerchantRule]) -> MerchantRule? {
-        let normalizedDescription = MerchantRuleNormalizer.normalizedMerchantKey(for: rawDescription)
-        guard !normalizedDescription.isEmpty else { return nil }
+    // MARK: Matching
 
-        return rules
+    /// Whether `rule` matches a transaction with the given merchant name and
+    /// original description. Case-insensitive, whitespace-normalized, tested
+    /// against **both** fields. `.exact` rules also honor the legacy
+    /// processor-noise-stripped key and token-subset match so pre-existing
+    /// rules keep working.
+    func matches(_ rule: MerchantRule, merchantName: String, originalDescription: String) -> Bool {
+        specificity(of: rule, merchantName: merchantName, originalDescription: originalDescription) != nil
+    }
+
+    /// A higher number = a more specific match; `nil` = no match.
+    private func specificity(of rule: MerchantRule, merchantName: String, originalDescription: String) -> Int? {
+        let needle = MerchantRuleNormalizer.caseFolded(rule.matchText)
+        guard !needle.isEmpty else { return nil }
+
+        let haystacks = [
+            MerchantRuleNormalizer.caseFolded(merchantName),
+            MerchantRuleNormalizer.caseFolded(originalDescription)
+        ].filter { !$0.isEmpty }
+
+        switch rule.matchType {
+        case .exact:
+            if haystacks.contains(where: { $0 == needle }) { return MerchantRuleMatchType.exact.specificityRank }
+        case .startsWith:
+            if haystacks.contains(where: { $0.hasPrefix(needle) }) { return MerchantRuleMatchType.startsWith.specificityRank }
+        case .endsWith:
+            if haystacks.contains(where: { $0.hasSuffix(needle) }) { return MerchantRuleMatchType.endsWith.specificityRank }
+        case .contains:
+            if haystacks.contains(where: { $0.contains(needle) }) { return MerchantRuleMatchType.contains.specificityRank }
+        }
+
+        // Legacy fallback for `.exact` rules only (normalized-key equality or a
+        // ≥2-token subset), preserving pre-match-type behavior.
+        guard rule.matchType == .exact else { return nil }
+
+        let ruleKey = rule.normalizedMatchText.isEmpty
+            ? MerchantRuleNormalizer.normalizedMerchantKey(for: rule.matchText)
+            : rule.normalizedMatchText
+        guard !ruleKey.isEmpty else { return nil }
+
+        for source in [originalDescription, merchantName] where !source.isEmpty {
+            let descriptionKey = MerchantRuleNormalizer.normalizedMerchantKey(for: source)
+            guard !descriptionKey.isEmpty else { continue }
+            if descriptionKey == ruleKey { return MerchantRuleMatchType.exact.specificityRank }
+            let descriptionTokens = Set(descriptionKey.split(separator: " ").map(String.init))
+            let ruleTokens = Set(ruleKey.split(separator: " ").map(String.init))
+            if ruleTokens.count >= 2, ruleTokens.isSubset(of: descriptionTokens) {
+                return MerchantRuleMatchType.startsWith.specificityRank // "as specific as prefix"
+            }
+        }
+        return nil
+    }
+
+    /// The winning rule for a transaction. Conflict order:
+    /// **priority** (higher wins outright) → match specificity (exact >
+    /// starts/ends > contains) → longer `matchText` → most recently updated.
+    func bestRule(for merchantName: String, originalDescription: String, rules: [MerchantRule]) -> MerchantRule? {
+        rules
             .filter(\.isEnabled)
-            .compactMap { rule -> (rule: MerchantRule, score: Int)? in
-                let normalizedRule = rule.normalizedMatchText.isEmpty
-                    ? MerchantRuleNormalizer.normalizedMerchantKey(for: rule.matchText)
-                    : rule.normalizedMatchText
-                guard !normalizedRule.isEmpty else { return nil }
-
-                if normalizedDescription == normalizedRule {
-                    return (rule, 3)
-                }
-
-                let descriptionTokens = Set(normalizedDescription.split(separator: " ").map(String.init))
-                let ruleTokens = Set(normalizedRule.split(separator: " ").map(String.init))
-                guard ruleTokens.count >= 2 else { return nil }
-
-                if ruleTokens.isSubset(of: descriptionTokens) {
-                    return (rule, 2)
-                }
-
-                return nil
+            .compactMap { rule -> (rule: MerchantRule, specificity: Int)? in
+                guard let s = specificity(of: rule, merchantName: merchantName, originalDescription: originalDescription) else { return nil }
+                return (rule, s)
             }
             .sorted { lhs, rhs in
-                if lhs.score != rhs.score {
-                    return lhs.score > rhs.score
-                }
-                if lhs.rule.normalizedMatchText.count != rhs.rule.normalizedMatchText.count {
-                    return lhs.rule.normalizedMatchText.count > rhs.rule.normalizedMatchText.count
-                }
+                if lhs.rule.priority != rhs.rule.priority { return lhs.rule.priority > rhs.rule.priority }
+                if lhs.specificity != rhs.specificity { return lhs.specificity > rhs.specificity }
+                let lhsLen = MerchantRuleNormalizer.caseFolded(lhs.rule.matchText).count
+                let rhsLen = MerchantRuleNormalizer.caseFolded(rhs.rule.matchText).count
+                if lhsLen != rhsLen { return lhsLen > rhsLen }
                 return lhs.rule.updatedAt > rhs.rule.updatedAt
             }
             .first?
             .rule
     }
 
-    func application(for rawDescription: String, rules: [MerchantRule]) -> MerchantRuleApplication? {
-        guard let rule = bestRule(for: rawDescription, rules: rules) else { return nil }
+    /// Convenience for callers that only have one text field.
+    func bestRule(for rawDescription: String, rules: [MerchantRule]) -> MerchantRule? {
+        bestRule(for: rawDescription, originalDescription: rawDescription, rules: rules)
+    }
+
+    func application(for merchantName: String, originalDescription: String, rules: [MerchantRule]) -> MerchantRuleApplication? {
+        guard let rule = bestRule(for: merchantName, originalDescription: originalDescription, rules: rules) else { return nil }
         return MerchantRuleApplication(displayName: rule.displayName, category: rule.category, rule: rule)
     }
 
+    func application(for rawDescription: String, rules: [MerchantRule]) -> MerchantRuleApplication? {
+        application(for: rawDescription, originalDescription: rawDescription, rules: rules)
+    }
+
     func applyRules(to transaction: Transaction, rules: [MerchantRule]) {
-        let sourceText = transaction.originalDescription.isEmpty ? transaction.merchantName : transaction.originalDescription
-        guard let application = application(for: sourceText, rules: rules) else { return }
+        guard let application = application(
+            for: transaction.merchantName,
+            originalDescription: transaction.originalDescription,
+            rules: rules
+        ) else { return }
         transaction.merchantName = application.displayName
         if let category = application.category {
             transaction.category = category
@@ -105,70 +163,67 @@ struct MerchantRuleService {
         transaction.updatedAt = .now
     }
 
+    // MARK: Learning
+
     @MainActor
     func rememberRule(
         matchText: String,
         displayName: String,
         category: Category?,
+        matchType: MerchantRuleMatchType = .contains,
+        priority: Int = 0,
         modelContext: ModelContext,
         saveImmediately: Bool = true
     ) {
-        let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedMatchText = matchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedMatchText = MerchantRuleNormalizer.normalizedMerchantKey(for: trimmedMatchText)
-        guard !trimmedDisplayName.isEmpty, !normalizedMatchText.isEmpty else { return }
-
-        let rule = MerchantRule(
-            matchText: trimmedMatchText,
-            normalizedMatchText: normalizedMatchText,
-            displayName: trimmedDisplayName,
-            category: category
+        _ = learnRule(
+            matchText: matchText,
+            displayName: displayName,
+            category: category,
+            matchType: matchType,
+            priority: priority,
+            existingRules: [],
+            modelContext: modelContext,
+            saveImmediately: saveImmediately
         )
-        modelContext.insert(rule)
-        if saveImmediately {
-            try? modelContext.save()
-        }
     }
 
-    /// Create-or-update used when the user confirms/corrects an AI suggestion:
-    /// if a rule with the same normalized key already exists it is updated in
-    /// place (so we never accumulate duplicates), otherwise a new rule is
-    /// inserted. Similar future transactions then resolve locally with no AI
-    /// call. Returns the affected rule, or `nil` if the input was unusable.
+    /// Create-or-update: if a rule with the same `matchText` + `matchType`
+    /// already exists it's updated in place (no duplicates); otherwise a new
+    /// rule is inserted. Returns the affected rule, or `nil` on unusable input.
     @MainActor
     @discardableResult
     func learnRule(
         matchText: String,
         displayName: String,
         category: Category?,
+        matchType: MerchantRuleMatchType = .contains,
+        priority: Int = 0,
         existingRules: [MerchantRule],
         modelContext: ModelContext,
         saveImmediately: Bool = true
     ) -> MerchantRule? {
         let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedMatchText = matchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folded = MerchantRuleNormalizer.caseFolded(trimmedMatchText)
+        guard !trimmedDisplayName.isEmpty, folded.count >= matchType.minimumMatchTextLength else { return nil }
+
         let normalizedMatchText = MerchantRuleNormalizer.normalizedMerchantKey(for: trimmedMatchText)
-        guard !trimmedDisplayName.isEmpty, !normalizedMatchText.isEmpty else { return nil }
 
         let match = existingRules.first { rule in
-            let ruleKey = rule.normalizedMatchText.isEmpty
-                ? MerchantRuleNormalizer.normalizedMerchantKey(for: rule.matchText)
-                : rule.normalizedMatchText
-            return ruleKey == normalizedMatchText
+            rule.matchType == matchType &&
+                MerchantRuleNormalizer.caseFolded(rule.matchText) == folded
         }
 
         if let match {
             match.matchText = trimmedMatchText
             match.normalizedMatchText = normalizedMatchText
             match.displayName = trimmedDisplayName
-            if let category {
-                match.category = category
-            }
+            match.matchType = matchType
+            if priority != 0 { match.priority = priority }
+            if let category { match.category = category }
             match.isEnabled = true
             match.updatedAt = .now
-            if saveImmediately {
-                try? modelContext.save()
-            }
+            if saveImmediately { try? modelContext.save() }
             return match
         }
 
@@ -176,35 +231,44 @@ struct MerchantRuleService {
             matchText: trimmedMatchText,
             normalizedMatchText: normalizedMatchText,
             displayName: trimmedDisplayName,
+            matchType: matchType,
+            priority: priority,
             category: category
         )
         modelContext.insert(rule)
-        if saveImmediately {
-            try? modelContext.save()
-        }
+        if saveImmediately { try? modelContext.save() }
         return rule
     }
 
     @MainActor
-    func updateRule(_ rule: MerchantRule, matchText: String, displayName: String, category: Category?, isEnabled: Bool) {
+    func updateRule(
+        _ rule: MerchantRule,
+        matchText: String,
+        displayName: String,
+        matchType: MerchantRuleMatchType,
+        priority: Int,
+        category: Category?,
+        isEnabled: Bool
+    ) {
         rule.matchText = matchText.trimmingCharacters(in: .whitespacesAndNewlines)
         rule.normalizedMatchText = MerchantRuleNormalizer.normalizedMerchantKey(for: rule.matchText)
         rule.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        rule.matchType = matchType
+        rule.priority = priority
         rule.category = category
         rule.isEnabled = isEnabled
         rule.updatedAt = .now
     }
 
     @MainActor
-    func applyRuleToExistingTransactions(
-        rule: MerchantRule,
-        transactions: [Transaction]
-    ) {
+    func applyRuleToExistingTransactions(rule: MerchantRule, transactions: [Transaction]) {
         guard rule.isEnabled else { return }
-
         for transaction in transactions {
-            let sourceText = transaction.originalDescription.isEmpty ? transaction.merchantName : transaction.originalDescription
-            guard bestRule(for: sourceText, rules: [rule])?.id == rule.id else { continue }
+            guard bestRule(
+                for: transaction.merchantName,
+                originalDescription: transaction.originalDescription,
+                rules: [rule]
+            )?.id == rule.id else { continue }
             transaction.merchantName = rule.displayName
             if let category = rule.category {
                 transaction.category = category

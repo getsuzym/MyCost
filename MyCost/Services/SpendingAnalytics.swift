@@ -3,6 +3,9 @@ import Foundation
 struct CategorySpend: Identifiable, Equatable {
     let categoryName: String
     let amount: Decimal
+    /// `amount / eligible monthly spending × 100`, `0` when the month has no
+    /// eligible spending. Can be negative for a category that is net-refund.
+    var percentageOfTotal: Double = 0
 
     /// Stable identity: the category name is unique within a summary (it's the
     /// grouping key). A random UUID here made `ForEach` regenerate every row on
@@ -74,14 +77,19 @@ struct SpendingAnalytics {
                 total + recurringSuggestionService.expectedMonthlyAmount(for: recurringPayment)
             }
 
+        // Denominator for percentages: the eligible monthly spending, i.e. the
+        // same `total` (non-excluded, counts-as-spending, normalized). Refunds
+        // reduce it exactly as they reduce a category. `0` when there's nothing.
+        let eligibleTotal = NSDecimalNumber(decimal: total).doubleValue
         let categoryTotals = Dictionary(grouping: includedTransactions) { transaction in
             transaction.category?.name ?? "Uncategorized"
         }
         .map { categoryName, transactions in
-            CategorySpend(
-                categoryName: categoryName,
-                amount: transactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
-            )
+            let amount = transactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+            let percentage = eligibleTotal == 0
+                ? 0
+                : (NSDecimalNumber(decimal: amount).doubleValue / eligibleTotal) * 100
+            return CategorySpend(categoryName: categoryName, amount: amount, percentageOfTotal: percentage)
         }
         .sorted { $0.amount > $1.amount }
 

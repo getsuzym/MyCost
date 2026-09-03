@@ -143,6 +143,7 @@ struct OCRTransactionImportService {
             matchText: draft.sourceText,
             displayName: draft.trimmedMerchantName,
             category: category,
+            matchType: .exact,
             existingRules: existingRules,
             modelContext: modelContext,
             saveImmediately: false

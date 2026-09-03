@@ -2436,6 +2436,267 @@ final class MyCostTests: XCTestCase {
             .categoryTotals.first { $0.categoryName == "Dining" })
     }
 
+    // MARK: - Dynamic merchant rule matching (match types, priority, conflicts)
+
+    func testContainsRuleMatchesSubstringOfDescription() {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let rule = MerchantRule(matchText: "UBER EATS", displayName: "Uber Eats", matchType: .contains, category: dining)
+        let match = MerchantRuleService().bestRule(
+            for: "Uber Eats",
+            originalDescription: "UBER EATS 8005 SAN FRANCISCO CA 94103",
+            rules: [rule]
+        )
+        XCTAssertEqual(match?.displayName, "Uber Eats")
+        XCTAssertEqual(match?.category?.name, "Dining")
+    }
+
+    func testContainsRuleMatchesProcessorToken() {
+        let rule = MerchantRule(matchText: "AMZN", displayName: "Amazon", matchType: .contains)
+        XCTAssertNotNil(MerchantRuleService().bestRule(
+            for: "AMZN Mktp US*2L88Z4Y03", originalDescription: "AMZN Mktp US*2L88Z4Y03", rules: [rule]))
+    }
+
+    func testStartsWithAndEndsWithRules() {
+        let svc = MerchantRuleService()
+        let starts = MerchantRule(matchText: "SQ *CAFE MEDINA", displayName: "Cafe Medina", matchType: .startsWith)
+        XCTAssertNotNil(svc.bestRule(for: "SQ *CAFE MEDINA VANCOUVER BC", originalDescription: "SQ *CAFE MEDINA VANCOUVER BC", rules: [starts]))
+        XCTAssertNil(svc.bestRule(for: "PAYMENT SQ *CAFE MEDINA", originalDescription: "PAYMENT SQ *CAFE MEDINA", rules: [starts]))
+
+        let ends = MerchantRule(matchText: "SUPERMARKET", displayName: "T&T Supermarket", matchType: .endsWith)
+        XCTAssertNotNil(svc.bestRule(for: "T&T SUPERMARKET", originalDescription: "PURCHASE T&T SUPERMARKET", rules: [ends]))
+        XCTAssertNil(svc.bestRule(for: "SUPERMARKET SWEEP TICKETS", originalDescription: "SUPERMARKET SWEEP TICKETS", rules: [ends]))
+    }
+
+    func testMatchingIsCaseInsensitiveAndWhitespaceNormalized() {
+        let rule = MerchantRule(matchText: "  uber   eats ", displayName: "Uber Eats", matchType: .contains)
+        let match = MerchantRuleService().bestRule(
+            for: "PAYPAL *UBER   EATS   \tHELP.UBER.COM",
+            originalDescription: "PAYPAL *UBER   EATS   \tHELP.UBER.COM",
+            rules: [rule]
+        )
+        XCTAssertEqual(match?.displayName, "Uber Eats")
+    }
+
+    func testMatchesAgainstMerchantNameEvenWhenDescriptionDiffers() {
+        let rule = MerchantRule(matchText: "Cafe Medina", displayName: "Cafe Medina", matchType: .contains)
+        let match = MerchantRuleService().bestRule(
+            for: "Cafe Medina",
+            originalDescription: "SQ *CM 8837 VANCOUVER",
+            rules: [rule]
+        )
+        XCTAssertEqual(match?.displayName, "Cafe Medina")
+    }
+
+    func testExactBeatsStartsWithBeatsContainsOnEqualPriority() {
+        let contains = MerchantRule(matchText: "AMAZON", displayName: "From Contains", matchType: .contains)
+        let starts = MerchantRule(matchText: "AMAZON PRIME", displayName: "From StartsWith", matchType: .startsWith)
+        let exact = MerchantRule(matchText: "AMAZON PRIME VIDEO", displayName: "From Exact", matchType: .exact)
+        let desc = "AMAZON PRIME VIDEO"
+        let svc = MerchantRuleService()
+        XCTAssertEqual(svc.bestRule(for: desc, originalDescription: desc, rules: [contains, starts, exact])?.displayName, "From Exact")
+        XCTAssertEqual(svc.bestRule(for: desc, originalDescription: desc, rules: [contains, starts])?.displayName, "From StartsWith")
+        XCTAssertEqual(svc.bestRule(for: desc, originalDescription: desc, rules: [contains])?.displayName, "From Contains")
+    }
+
+    func testExplicitPriorityOverridesSpecificity() {
+        let specificExact = MerchantRule(matchText: "AMAZON PRIME VIDEO", displayName: "Exact wins normally", matchType: .exact, priority: 0)
+        let broadContains = MerchantRule(matchText: "AMAZON", displayName: "Priority Contains", matchType: .contains, priority: 10)
+        let desc = "AMAZON PRIME VIDEO"
+        XCTAssertEqual(
+            MerchantRuleService().bestRule(for: desc, originalDescription: desc, rules: [specificExact, broadContains])?.displayName,
+            "Priority Contains"
+        )
+    }
+
+    func testOverlyBroadContainsRuleDoesNotOverrideMoreSpecificUserRule() {
+        let broad = MerchantRule(matchText: "AMA", displayName: "Broad", matchType: .contains, priority: 0)
+        let specific = MerchantRule(matchText: "AMAZON FRESH", displayName: "Amazon Fresh", matchType: .contains, priority: 0)
+        let desc = "AMZN MKTP AMAZON FRESH 4471"
+        XCTAssertEqual(
+            MerchantRuleService().bestRule(for: desc, originalDescription: desc, rules: [broad, specific])?.displayName,
+            "Amazon Fresh"
+        )
+    }
+
+    func testUserRuleAlwaysBeatsLocalCategorizer() {
+        let shopping = makeCategory("Shopping", sortOrder: 0)
+        _ = makeCategory("Dining", sortOrder: 1)
+        let rule = MerchantRule(matchText: "COFFEE SUPPLY CO", displayName: "Coffee Supply", matchType: .contains, category: shopping)
+        let outcome = MerchantCategorizationCoordinator().categorize(
+            merchantDescription: "SQ *COFFEE SUPPLY CO 88",
+            rules: [rule], availableCategoryNames: ["Shopping", "Dining"]
+        )
+        XCTAssertEqual(outcome, .ruleMatch(displayName: "Coffee Supply", categoryName: "Shopping", ruleID: rule.id))
+    }
+
+    func testLearnRuleCreatesContainsRuleThatMatchesFutureNoisyDescriptions() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        try context.save()
+        let created = MerchantRuleService().learnRule(
+            matchText: "Uber Eats", displayName: "Uber Eats", category: dining,
+            matchType: .contains, existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(created?.matchType, .contains)
+        let rules = try context.fetch(FetchDescriptor<MerchantRule>())
+        XCTAssertNotNil(MerchantRuleService().bestRule(
+            for: "Uber Eats",
+            originalDescription: "PAYPAL *UBER EATS 8000 855-123 CA",
+            rules: rules))
+    }
+
+    func testLearnRuleRejectsTooShortSubstringRule() {
+        XCTAssertNil(MerchantRuleService().learnRule(
+            matchText: "AB", displayName: "Nope", category: nil,
+            matchType: .contains, existingRules: [], modelContext: context
+        ))
+        // Exact still allows a short string.
+        XCTAssertNotNil(MerchantRuleService().learnRule(
+            matchText: "AB", displayName: "Ok", category: nil,
+            matchType: .exact, existingRules: [], modelContext: context
+        ))
+    }
+
+    func testDisabledDynamicRuleNeverMatches() {
+        let rule = MerchantRule(matchText: "UBER EATS", displayName: "Uber Eats", matchType: .contains, isEnabled: false)
+        XCTAssertNil(MerchantRuleService().bestRule(for: "UBER EATS SF", originalDescription: "UBER EATS SF", rules: [rule]))
+    }
+
+    // MARK: - Category percentage of monthly spending
+
+    private func summaryFor(_ month: Date) throws -> MonthlySpendingSummary {
+        SpendingAnalytics().monthlySummary(for: month, transactions: try allTransactions())
+    }
+
+    func testCategoryPercentagesSumToApproximately100() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let shopping = makeCategory("Shopping", sortOrder: 2)
+        insertTransaction("A", amount: 620, on: date(2026, 8, 3), category: dining)
+        insertTransaction("B", amount: 480, on: date(2026, 8, 8), category: groceries)
+        insertTransaction("C", amount: 300, on: date(2026, 8, 12), category: shopping)
+        try context.save()
+
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 1400)
+        let byName = Dictionary(uniqueKeysWithValues: summary.categoryTotals.map { ($0.categoryName, $0) })
+        XCTAssertEqual(byName["Dining"]?.percentageOfTotal ?? 0, 620.0 / 1400 * 100, accuracy: 0.001)
+        XCTAssertEqual(byName["Groceries"]?.percentageOfTotal ?? 0, 480.0 / 1400 * 100, accuracy: 0.001)
+        let sum = summary.categoryTotals.reduce(0.0) { $0 + $1.percentageOfTotal }
+        XCTAssertEqual(sum, 100, accuracy: 0.01)
+    }
+
+    func testPercentagesExcludeTransfersPaymentsDepositsAndExcluded() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let bills = makeCategory("Bills", sortOrder: 1)
+        insertTransaction("Dinner", amount: 100, on: date(2026, 8, 5), category: dining)
+        let payment = insertTransaction("CC Payment", amount: -500, on: date(2026, 8, 6), category: bills)
+        payment.countsAsSpending = false
+        payment.normalizedAmount = 0
+        payment.transactionDirection = .credit
+        _ = insertTransaction("Reimbursed lunch", amount: 60, on: date(2026, 8, 7), excluded: true, category: dining)
+        try context.save()
+
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 100)
+        XCTAssertEqual(summary.categoryTotals.count, 1)
+        XCTAssertEqual(summary.categoryTotals[0].categoryName, "Dining")
+        XCTAssertEqual(summary.categoryTotals[0].percentageOfTotal, 100, accuracy: 0.001)
+    }
+
+    func testPercentagesWithRefundReduceCategoryAndTotal() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let shopping = makeCategory("Shopping", sortOrder: 1)
+        insertTransaction("Dinner", amount: 200, on: date(2026, 8, 3), category: dining)
+        let refund = insertTransaction("Refund", amount: -50, on: date(2026, 8, 9), category: shopping)
+        refund.transactionDirection = .credit
+        refund.normalizedAmount = -50
+        insertTransaction("Shirt", amount: 100, on: date(2026, 8, 10), category: shopping)
+        try context.save()
+
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 250)
+        let byName = Dictionary(uniqueKeysWithValues: summary.categoryTotals.map { ($0.categoryName, $0) })
+        XCTAssertEqual(byName["Shopping"]?.amount, 50)
+        XCTAssertEqual(byName["Shopping"]?.percentageOfTotal ?? 0, 50.0 / 250 * 100, accuracy: 0.001)
+        XCTAssertEqual(byName["Dining"]?.percentageOfTotal ?? 0, 80, accuracy: 0.001)
+    }
+
+    func testEmptyMonthHasNoCategoriesAndZeroTotal() throws {
+        _ = makeCategory("Dining", sortOrder: 0)
+        insertTransaction("Next month", amount: 100, on: date(2026, 9, 3))
+        try context.save()
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 0)
+        XCTAssertTrue(summary.categoryTotals.isEmpty)
+    }
+
+    func testPercentageIsZeroWhenEligibleTotalIsZero() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        insertTransaction("Buy", amount: 100, on: date(2026, 8, 3), category: dining)
+        let refund = insertTransaction("Full refund", amount: -100, on: date(2026, 8, 4), category: dining)
+        refund.transactionDirection = .credit
+        refund.normalizedAmount = -100
+        try context.save()
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 0)
+        XCTAssertEqual(summary.categoryTotals.first?.percentageOfTotal, 0)
+    }
+
+    func testCategorySpendSortedByAmountDescending() throws {
+        let a = makeCategory("A", sortOrder: 0)
+        let b = makeCategory("B", sortOrder: 1)
+        let c = makeCategory("C", sortOrder: 2)
+        insertTransaction("x", amount: 100, on: date(2026, 8, 3), category: a)
+        insertTransaction("y", amount: 300, on: date(2026, 8, 4), category: b)
+        insertTransaction("z", amount: 200, on: date(2026, 8, 5), category: c)
+        try context.save()
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).categoryTotals.map(\.categoryName), ["B", "C", "A"])
+    }
+
+    func testPercentagesRecalculateAfterAddEditExcludeDirectionAndDelete() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        let t1 = insertTransaction("Dinner", amount: 100, on: date(2026, 8, 3), category: dining)
+        let t2 = insertTransaction("Market", amount: 100, on: date(2026, 8, 4), category: groceries)
+        try context.save()
+
+        func pct(_ name: String) throws -> Double {
+            try summaryFor(date(2026, 8, 15)).categoryTotals.first { $0.categoryName == name }?.percentageOfTotal ?? 0
+        }
+
+        XCTAssertEqual(try pct("Dining"), 50, accuracy: 0.001)
+
+        t1.amount = 300
+        try context.save()
+        XCTAssertEqual(try pct("Dining"), 75, accuracy: 0.001)
+
+        t2.category = dining
+        try context.save()
+        XCTAssertEqual(try pct("Dining"), 100, accuracy: 0.001)
+        XCTAssertNil(try summaryFor(date(2026, 8, 15)).categoryTotals.first { $0.categoryName == "Groceries" })
+
+        t1.isExcluded = true
+        try context.save()
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).total, 100)
+        XCTAssertEqual(try pct("Dining"), 100, accuracy: 0.001)
+
+        _ = insertTransaction("New groceries", amount: 100, on: date(2026, 8, 6), category: groceries)
+        try context.save()
+        XCTAssertEqual(try pct("Dining"), 50, accuracy: 0.001)
+
+        let newGroceries = try XCTUnwrap(try allTransactions().first { $0.merchantName == "New groceries" })
+        newGroceries.countsAsSpending = false
+        newGroceries.normalizedAmount = 0
+        newGroceries.transactionDirection = .credit
+        try context.save()
+        XCTAssertEqual(try pct("Dining"), 100, accuracy: 0.001)
+
+        context.delete(t2)
+        try context.save()
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).total, 0)
+        XCTAssertTrue(try summaryFor(date(2026, 8, 15)).categoryTotals.isEmpty)
+    }
+
         private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }
