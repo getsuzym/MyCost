@@ -60,6 +60,7 @@ struct ImportView: View {
             }
         }
         .navigationTitle("Import Screenshots")
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

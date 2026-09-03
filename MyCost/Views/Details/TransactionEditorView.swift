@@ -219,6 +219,7 @@ struct TransactionEditorView: View {
             }
         }
         .navigationTitle(title)
+        .themedListBackground()
         .confirmationDialog(
             "Possible duplicate transaction",
             isPresented: Binding(
@@ -735,33 +736,41 @@ private struct InlineRuleRow: View {
     let rule: MerchantRule
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(rule.normalizedMerchantName)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                if rule.isRecurring {
-                    Text("Recurring")
+        HStack(spacing: 12) {
+            IconBadge(
+                systemName: rule.isRecurring ? "repeat" : "wand.and.stars",
+                tint: rule.isActive ? Theme.accent : .secondary,
+                size: 30
+            )
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(rule.normalizedMerchantName)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    if rule.isRecurring {
+                        Text("Recurring")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Theme.accent.opacity(0.15), in: Capsule())
+                            .foregroundStyle(Theme.accent)
+                    }
+                    if !rule.isActive {
+                        Text("Disabled").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(rule.matchType.label)
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.blue.opacity(0.15), in: Capsule())
+                        .background(Color(.tertiarySystemFill), in: Capsule())
+                    Text("\u{201C}\(rule.matchText)\u{201D}").lineLimit(1)
+                    if let category = rule.category {
+                        Text("\u{00B7} \(category.name)")
+                    }
                 }
-                if !rule.isActive {
-                    Text("Disabled").font(.caption2).foregroundStyle(.secondary)
-                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            HStack(spacing: 6) {
-                Text(rule.matchType.label)
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Theme.accent.opacity(0.15), in: Capsule())
-                Text("\u{201C}\(rule.matchText)\u{201D}").lineLimit(1)
-                if let category = rule.category {
-                    Text("\u{00B7} \(category.name)")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 }

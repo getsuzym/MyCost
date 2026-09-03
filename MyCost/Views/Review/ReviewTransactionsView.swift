@@ -100,6 +100,7 @@ struct ReviewTransactionsView: View {
             }
         }
         .navigationTitle("Review")
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

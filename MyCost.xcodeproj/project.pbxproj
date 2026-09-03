@@ -56,6 +56,7 @@
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
 		00000000000000000000090B /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090C /* AppLog.swift */; };
+		00000000000000000000090F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000910 /* Assets.xcassets */; };
 		000000000000000000000907 /* MerchantRuleBackfillService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000908 /* MerchantRuleBackfillService.swift */; };
 		000000000000000000000903 /* RecurrenceRuleEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000904 /* RecurrenceRuleEditor.swift */; };
 		000000000000000000000134 /* TransactionNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000035 /* TransactionNormalizer.swift */; };
@@ -122,6 +123,7 @@
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
 		00000000000000000000090C /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
+		000000000000000000000910 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000908 /* MerchantRuleBackfillService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleBackfillService.swift; sourceTree = "<group>"; };
 		000000000000000000000035 /* TransactionNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionNormalizer.swift; sourceTree = "<group>"; };
 		000000000000000000000036 /* BankLayoutProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankLayoutProfile.swift; sourceTree = "<group>"; };
@@ -178,6 +180,7 @@
 			children = (
 				8A26197730479CE900C9C94A /* Info.plist */,
 				000000000000000000000001 /* MyCostApp.swift */,
+				000000000000000000000910 /* Assets.xcassets */,
 				000000000000000000000304 /* Models */,
 				000000000000000000000305 /* Services */,
 				000000000000000000000306 /* Views */,
@@ -474,6 +477,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00000000000000000000090F /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -713,6 +717,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -740,6 +745,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;

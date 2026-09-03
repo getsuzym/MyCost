@@ -146,6 +146,7 @@ struct MerchantRuleEditorView: View {
             }
         }
         .navigationTitle(title)
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

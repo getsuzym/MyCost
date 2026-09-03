@@ -49,6 +49,7 @@ struct TransactionDetailView: View {
             }
         }
         .navigationTitle("Transaction")
+        .themedListBackground()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {

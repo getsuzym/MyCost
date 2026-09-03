@@ -61,31 +61,43 @@ struct CategoryDetailView: View {
         let rows = monthTransactions
         return List {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 14) {
                     HStack {
-                        Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                        Button { stepMonth(-1) } label: { Image(systemName: "chevron.left").font(.body.weight(.semibold)) }
                             .accessibilityLabel("Previous month")
                             .accessibilityIdentifier("categoryDetail.previousMonth")
+                        Spacer()
                         Text(Formatters.month.string(from: monthAnchor))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
+                            .font(.subheadline.weight(.medium))
                             .accessibilityLabel("Showing \(Formatters.month.string(from: monthAnchor))")
-                        Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
+                        Spacer()
+                        Button { stepMonth(1) } label: { Image(systemName: "chevron.right").font(.body.weight(.semibold)) }
                             .disabled(isCurrentMonth)
                             .accessibilityLabel("Next month")
                             .accessibilityIdentifier("categoryDetail.nextMonth")
                     }
                     .buttonStyle(.borderless)
+                    .tint(.secondary)
 
-                    Text(Formatters.currencyString(for: categoryTotal))
-                        .font(.largeTitle.bold())
-                        .accessibilityIdentifier("categoryDetail.total")
-                    Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s") · \(Formatters.percentString(percentageOfMonth)) of \(Formatters.month.string(from: monthAnchor)) spending")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(categoryName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                        Text(Formatters.currencyString(for: categoryTotal))
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                            .minimumScaleFactor(0.6)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("categoryDetail.total")
+                        Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s") · \(Formatters.percentString(percentageOfMonth)) of \(Formatters.month.string(from: monthAnchor)) spending")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .padding(.vertical, 4)
+                .cardSurface(20)
+                .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 6, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
 
             Section {
