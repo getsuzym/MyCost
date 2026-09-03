@@ -235,10 +235,17 @@ struct TransactionCandidateParser {
         let selectedAmount = amountMatches.last
         confidence.amount = amountMatches.isEmpty ? 0 : (amountMatches.count == 1 ? 0.95 : 0.65)
 
-        let merchantDescription = heuristics.cleanMerchantDescription(
+        var merchantDescription = heuristics.cleanMerchantDescription(
             from: joinedText,
             removing: removableFragments
         )
+
+        // Never store a recognized date ("Sep 2", "09/02", "Today") as the
+        // merchant — if that's all that's left, leave it blank for review.
+        if !merchantDescription.isEmpty, heuristics.isEssentiallyJustADate(merchantDescription) {
+            merchantDescription = ""
+            flags.insert(.possibleNonTransactionLine)
+        }
 
         if merchantDescription.isEmpty {
             flags.insert(.missingMerchantDescription)

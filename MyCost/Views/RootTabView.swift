@@ -47,6 +47,14 @@ struct RootTabView: View {
             .accessibilityIdentifier("tab.categories")
 
             NavigationStack {
+                AccountsView()
+            }
+            .tabItem {
+                Label("Accounts", systemImage: "creditcard")
+            }
+            .accessibilityIdentifier("tab.accounts")
+
+            NavigationStack {
                 RecurringPaymentsView()
             }
             .tabItem {

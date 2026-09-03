@@ -9,7 +9,6 @@ struct MerchantRulesView: View {
 
     @State private var editingRule: MerchantRule?
     @State private var isAddingRule = false
-    @State private var isShowingAISettings = false
 
     var body: some View {
         List {
@@ -37,15 +36,6 @@ struct MerchantRulesView: View {
                 }
                 .accessibilityIdentifier("merchantRules.add")
             }
-
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    isShowingAISettings = true
-                } label: {
-                    Label("AI Provider", systemImage: "sparkles")
-                }
-                .accessibilityIdentifier("merchantRules.aiSettings")
-            }
         }
         .sheet(item: $editingRule) { rule in
             NavigationStack {
@@ -55,11 +45,6 @@ struct MerchantRulesView: View {
         .sheet(isPresented: $isAddingRule) {
             NavigationStack {
                 MerchantRuleEditorView(rule: nil, categories: categories)
-            }
-        }
-        .sheet(isPresented: $isShowingAISettings) {
-            NavigationStack {
-                AIProviderSettingsView()
             }
         }
     }

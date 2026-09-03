@@ -6,12 +6,10 @@ private struct IdentifiedUUID: Identifiable {
     let id: UUID
 }
 
-/// Per-row state for the optional AI categorization fallback.
-enum AICategorizationRowState: Equatable {
-    case loading
-    case suggestion(MerchantClassification)
-    case lowConfidence(MerchantClassification)
-    case message(String)
+/// Per-row result of the deterministic (offline) category suggestion.
+enum CategorySuggestionRowState: Equatable {
+    case applied(String)
+    case noMatch
 }
 
 struct ReviewTransactionsView: View {
@@ -21,19 +19,18 @@ struct ReviewTransactionsView: View {
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
-    @Query private var aiConnections: [AIProviderConnection]
+    @Query(sort: \Account.name) private var accounts: [Account]
 
     @State private var saveMessage: String?
     @State private var importError: String?
-    @State private var aiRowStates: [UUID: AICategorizationRowState] = [:]
+    @State private var suggestionStates: [UUID: CategorySuggestionRowState] = [:]
     @State private var sourcePreviewID: UUID?
+    /// Account type chosen for each distinct account name in this review session.
+    @State private var accountTypeByName: [String: AccountType] = [:]
     private let merchantRuleService = MerchantRuleService()
     private let importService = OCRTransactionImportService()
-    private let aiProviderService = AIProviderService()
-
-    private var isAIConnected: Bool {
-        aiProviderService.activeConnection(in: aiConnections) != nil
-    }
+    private let accountService = AccountService()
+    private let coordinator = MerchantCategorizationCoordinator()
 
     private var possibleDuplicates: [Transaction] {
         transactions.filter { $0.duplicateState == .possibleDuplicate }
@@ -45,6 +42,16 @@ struct ReviewTransactionsView: View {
 
     private var hasInvalidSelectedDrafts: Bool {
         selectedDrafts.contains { !$0.canImport }
+    }
+
+    private var distinctAccountNames: [String] {
+        var seen = Set<String>()
+        var names: [String] = []
+        for draft in ocrReviewStore.drafts {
+            let name = draft.trimmedAccountName
+            if seen.insert(name).inserted { names.append(name) }
+        }
+        return names
     }
 
     private var batchSummaryText: String {
@@ -67,6 +74,10 @@ struct ReviewTransactionsView: View {
                             .foregroundStyle(.orange)
                     }
                 }
+            }
+
+            if !ocrReviewStore.drafts.isEmpty {
+                accountTypeSection
             }
 
             ocrResultsSection
@@ -105,6 +116,7 @@ struct ReviewTransactionsView: View {
                 }
             }
         }
+        .onAppear(perform: seedAccountTypes)
         .sheet(item: Binding(get: { sourcePreviewID.map(IdentifiedUUID.init) }, set: { sourcePreviewID = $0?.id })) { wrapper in
             sourcePreview(for: wrapper.id)
         }
@@ -112,6 +124,27 @@ struct ReviewTransactionsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(importError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var accountTypeSection: some View {
+        Section {
+            ForEach(distinctAccountNames, id: \.self) { name in
+                Picker(name, selection: Binding(
+                    get: { accountTypeByName[name] ?? .other },
+                    set: { accountTypeByName[name] = $0 }
+                )) {
+                    ForEach(AccountType.allCases) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .accessibilityIdentifier("review.accountType")
+            }
+        } header: {
+            Text("Account Type")
+        } footer: {
+            Text("How the bank shows amounts for this account. Saved and reused for future imports. Credit-card purchases are positive spending; debit purchases are negative.")
         }
     }
 
@@ -150,21 +183,17 @@ struct ReviewTransactionsView: View {
                 OCRTransactionDraftRow(
                     draft: $draft,
                     categories: categories,
-                    aiState: aiRowStates[draft.id],
-                    canAskAI: isAIConnected,
+                    suggestionState: suggestionStates[draft.id],
                     hasSourceScreenshot: draft.sourceScreenshotID.map { ocrReviewStore.sourceThumbnails[$0] != nil } ?? false,
                     onViewSource: {
                         if let id = draft.sourceScreenshotID { sourcePreviewID = id }
                     },
                     onRemove: {
                         ocrReviewStore.removeDraft(id: draft.id)
-                        aiRowStates[draft.id] = nil
+                        suggestionStates[draft.id] = nil
                     },
-                    onAskAI: { askAI(for: draft.id) },
-                    onAcceptSuggestion: { suggestion in
-                        acceptSuggestion(suggestion, for: draft.id)
-                    },
-                    onDismissAI: { aiRowStates[draft.id] = nil }
+                    onSuggestCategory: { suggestCategory(for: draft.id) },
+                    onDismissSuggestion: { suggestionStates[draft.id] = nil }
                 )
             }
         } header: {
@@ -184,10 +213,21 @@ struct ReviewTransactionsView: View {
         }
     }
 
+    private func seedAccountTypes() {
+        for name in distinctAccountNames where accountTypeByName[name] == nil {
+            accountTypeByName[name] = accountService.resolveType(for: name, in: accounts)
+        }
+    }
+
     private func saveApprovedTransactions() {
         guard !ocrReviewStore.drafts.filter({ $0.isSelected && $0.canImport }).isEmpty else { return }
         saveMessage = nil
         importError = nil
+
+        // Persist / update the account-type choices so future imports reuse them.
+        for (name, type) in accountTypeByName {
+            accountService.upsert(name: name, type: type, in: accounts, modelContext: modelContext)
+        }
 
         // Flag duplicates first: high-confidence ones deselect their draft;
         // medium "possible duplicates" only get a note and are still saved
@@ -205,6 +245,7 @@ struct ReviewTransactionsView: View {
         let outcome = importService.importDrafts(
             draftsToImport,
             categories: categories,
+            accountTypesByName: accountTypeByName,
             existingTransactions: transactions,
             existingRules: merchantRules,
             modelContext: modelContext
@@ -238,6 +279,9 @@ struct ReviewTransactionsView: View {
         if scan.mediumMatchCount > 0 {
             parts.append("\(scan.mediumMatchCount) saved as possible duplicate\(scan.mediumMatchCount == 1 ? "" : "s") — review under Possible Duplicates.")
         }
+        if outcome.reviewFlaggedCount > 0 {
+            parts.append("\(outcome.reviewFlaggedCount) flagged for direction review.")
+        }
         saveMessage = parts.joined(separator: " ")
 
         // Nothing left to review — end the session so the batch banner and
@@ -247,78 +291,35 @@ struct ReviewTransactionsView: View {
         }
     }
 
-    // MARK: - AI fallback
+    // MARK: - Deterministic category suggestion (offline: rule → known merchant)
 
-    private func askAI(for draftID: UUID) {
+    private func suggestCategory(for draftID: UUID) {
         guard let draft = ocrReviewStore.drafts.first(where: { $0.id == draftID }) else { return }
-        let coordinator = aiProviderService.makeCoordinator(for: aiConnections)
         let description = draft.sourceText.isEmpty ? draft.trimmedMerchantName : draft.sourceText
-        let amount = draft.parsedAmount
-        let categoryNames = categories.map(\.name)
-        let rules = merchantRules
-
-        aiRowStates[draftID] = .loading
-        Task {
-            let outcome = await coordinator.categorize(
-                merchantDescription: description,
-                amount: amount,
-                rules: rules,
-                availableCategoryNames: categoryNames
-            )
-            await MainActor.run { handle(outcome, for: draftID) }
-        }
-    }
-
-    private func handle(_ outcome: MerchantCategorizationCoordinator.Outcome, for draftID: UUID) {
+        let outcome = coordinator.categorize(
+            merchantDescription: description,
+            rules: merchantRules,
+            availableCategoryNames: categories.map(\.name)
+        )
         switch outcome {
         case let .ruleMatch(displayName, categoryName, _):
-            // A rule was added since import — apply directly, no confirmation.
             ocrReviewStore.applyCategorization(
                 to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName)
             )
-            aiRowStates[draftID] = nil
+            suggestionStates[draftID] = .applied(categoryName ?? "no category")
         case let .localMatch(displayName, categoryName):
-            // Deterministic local match — safe to apply without AI or confirmation.
             ocrReviewStore.applyCategorization(
                 to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName)
             )
-            aiRowStates[draftID] = nil
-        case let .aiSuggestion(classification):
-            aiRowStates[draftID] = .suggestion(classification)
-        case let .lowConfidence(classification):
-            aiRowStates[draftID] = .lowConfidence(classification)
-        case let .unresolved(reason):
-            aiRowStates[draftID] = .message(message(for: reason))
+            suggestionStates[draftID] = .applied(categoryName)
+        case .unresolved:
+            suggestionStates[draftID] = .noMatch
         }
-    }
-
-    private func acceptSuggestion(_ classification: MerchantClassification, for draftID: UUID) {
-        ocrReviewStore.applyCategorization(
-            to: draftID,
-            merchantName: classification.normalizedMerchantName,
-            categoryID: categoryID(named: classification.suggestedCategory)
-        )
-        aiRowStates[draftID] = nil
     }
 
     private func categoryID(named name: String?) -> UUID? {
         guard let name else { return nil }
         return categories.first { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }?.id
-    }
-
-    private func message(for reason: MerchantCategorizationCoordinator.UnresolvedReason) -> String {
-        switch reason {
-        case .notConfigured:
-            return "Connect an AI provider in Merchant Rules → AI Provider, or categorize manually."
-        case .providerUnavailable:
-            return "The connected AI provider has no valid key. Reconnect it in settings."
-        case .credentialsExpired:
-            return "The AI provider rejected the saved key. Reconnect it in settings."
-        case .requestFailed(let detail):
-            return "AI suggestion unavailable (\(detail)). Categorize manually."
-        case .invalidResponse:
-            return "The AI response could not be read. Categorize manually."
-        }
     }
 }
 
@@ -326,14 +327,12 @@ private struct OCRTransactionDraftRow: View {
     @Binding var draft: OCRTransactionDraft
 
     let categories: [Category]
-    let aiState: AICategorizationRowState?
-    let canAskAI: Bool
+    let suggestionState: CategorySuggestionRowState?
     let hasSourceScreenshot: Bool
     let onViewSource: () -> Void
     let onRemove: () -> Void
-    let onAskAI: () -> Void
-    let onAcceptSuggestion: (MerchantClassification) -> Void
-    let onDismissAI: () -> Void
+    let onSuggestCategory: () -> Void
+    let onDismissSuggestion: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -372,7 +371,7 @@ private struct OCRTransactionDraftRow: View {
 
             highlightedField(field: .amount) {
                 TextField("Amount", text: $draft.amountText)
-                    .keyboardType(.decimalPad)
+                    .keyboardType(.numbersAndPunctuation)
                     .accessibilityIdentifier("review.amount")
             }
 
@@ -393,7 +392,7 @@ private struct OCRTransactionDraftRow: View {
             Toggle("Remember merchant rule", isOn: $draft.shouldRememberMerchantRule)
                 .accessibilityIdentifier("review.rememberMerchantRule")
 
-            aiCategorizationView
+            categorySuggestionView
 
             highlightedField(field: .status) {
                 Picker("Status", selection: $draft.status) {
@@ -432,92 +431,31 @@ private struct OCRTransactionDraftRow: View {
     }
 
     @ViewBuilder
-    private var aiCategorizationView: some View {
-        switch aiState {
+    private var categorySuggestionView: some View {
+        switch suggestionState {
         case .none:
             if draft.selectedCategoryID == nil {
-                Button {
-                    onAskAI()
-                } label: {
-                    Label("Ask AI to categorize", systemImage: "sparkles")
+                Button(action: onSuggestCategory) {
+                    Label("Suggest category", systemImage: "wand.and.stars")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .disabled(!canAskAI)
-                .accessibilityIdentifier("review.askAI")
-
-                if !canAskAI {
-                    Text("Connect an AI provider in Merchant Rules → AI Provider.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                .accessibilityIdentifier("review.suggestCategory")
             }
-        case .loading:
-            HStack(spacing: 8) {
-                ProgressView()
-                Text("Asking AI…").font(.caption).foregroundStyle(.secondary)
-            }
-        case let .suggestion(classification):
-            suggestionBanner(classification, isConfident: true)
-        case let .lowConfidence(classification):
-            suggestionBanner(classification, isConfident: false)
-        case let .message(text):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(text).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Dismiss", action: onDismissAI)
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func suggestionBanner(_ classification: MerchantClassification, isConfident: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(
-                isConfident ? "AI suggestion" : "AI suggestion — low confidence, review",
-                systemImage: isConfident ? "sparkles" : "exclamationmark.triangle"
-            )
-            .font(.caption)
-            .foregroundStyle(isConfident ? Color.accentColor : .orange)
-
-            Text("\(classification.normalizedMerchantName)\(classification.suggestedCategory.map { " · \($0)" } ?? "") — \(Int((classification.confidence * 100).rounded()))%")
-                .font(.caption)
+        case let .applied(categoryName):
+            Label("Applied \(categoryName) from your rules / known merchants.", systemImage: "checkmark.circle")
+                .font(.caption2)
                 .foregroundStyle(.secondary)
-                .accessibilityIdentifier("review.aiSuggestionText")
-
-            if let reasoning = classification.reasoningSummary {
-                Text(reasoning)
+        case .noMatch:
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("No rule or known-merchant match. Pick a category above.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Button(isConfident ? "Use" : "Use anyway") {
-                    onAcceptSuggestion(classification)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("review.aiUseSuggestion")
-
                 Spacer()
-
-                Button("Dismiss", action: onDismissAI)
+                Button("Dismiss", action: onDismissSuggestion)
                     .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-            }
-            .font(.caption)
-
-            if !isConfident {
-                Text("Not applied automatically. Review and edit before saving.")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
-        }
-        .padding(8)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill((isConfident ? Color.accentColor : Color.orange).opacity(0.12))
         }
     }
 

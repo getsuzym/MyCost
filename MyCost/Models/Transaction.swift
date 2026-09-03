@@ -121,6 +121,8 @@ final class Transaction {
     var accountName: String
     var merchantName: String
     var originalDescription: String
+    /// The amount exactly as the bank displayed it, sign preserved. Kept for
+    /// reference and for duplicate detection; analytics use `spendingAmount`.
     var amount: Decimal
     var transactionDate: Date
     var postedDate: Date?
@@ -132,6 +134,21 @@ final class Transaction {
     var note: String
     var createdAt: Date
     var updatedAt: Date
+
+    // MARK: Account-type-aware normalization (defaulted → lightweight migration)
+
+    /// Consistent spending value: positive = spending, negative = refund/credit
+    /// that reduces spending, zero = not spending. Only meaningful when
+    /// `countsAsSpending`. Zero on legacy rows that predate normalization —
+    /// `spendingAmount` falls back to `amount` for those.
+    var normalizedAmount: Decimal = 0
+    var transactionDirectionRawValue: String = TransactionDirection.unknown.rawValue
+    var accountTypeRawValue: String = AccountType.other.rawValue
+    /// Whether this transaction is counted in spending totals at all.
+    var countsAsSpending: Bool = true
+    /// The bank's sign/description was unusual for the account type; the user
+    /// should confirm the direction.
+    var needsDirectionReview: Bool = false
 
     var category: Category?
     var recurringPayment: RecurringPayment?
@@ -150,6 +167,11 @@ final class Transaction {
         isRecurring: Bool = false,
         duplicateState: DuplicateState = .unique,
         note: String = "",
+        normalizedAmount: Decimal? = nil,
+        transactionDirection: TransactionDirection = .unknown,
+        accountType: AccountType = .other,
+        countsAsSpending: Bool = true,
+        needsDirectionReview: Bool = false,
         category: Category? = nil,
         recurringPayment: RecurringPayment? = nil,
         createdAt: Date = .now,
@@ -168,9 +190,47 @@ final class Transaction {
         self.isRecurring = isRecurring
         self.duplicateState = duplicateState
         self.note = note
+        self.normalizedAmount = normalizedAmount ?? amount
+        self.transactionDirectionRawValue = transactionDirection.rawValue
+        self.accountTypeRawValue = accountType.rawValue
+        self.countsAsSpending = countsAsSpending
+        self.needsDirectionReview = needsDirectionReview
         self.category = category
         self.recurringPayment = recurringPayment
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    /// The bank's original signed amount (alias for `amount`, kept for clarity
+    /// at call sites that contrast it with `normalizedAmount`).
+    var originalAmount: Decimal { amount }
+
+    var transactionDirection: TransactionDirection {
+        get { TransactionDirection(rawValue: transactionDirectionRawValue) ?? .unknown }
+        set { transactionDirectionRawValue = newValue.rawValue }
+    }
+
+    var accountType: AccountType {
+        get { AccountType(rawValue: accountTypeRawValue) ?? .other }
+        set { accountTypeRawValue = newValue.rawValue }
+    }
+
+    /// The value analytics should sum. Zero when the transaction doesn't count
+    /// as spending (payments, deposits). Rows that never went through
+    /// `TransactionNormalizer` (legacy data, or a direct `amount` edit) have
+    /// `transactionDirection == .unknown` and fall back to the raw `amount`.
+    var spendingAmount: Decimal {
+        guard countsAsSpending else { return 0 }
+        if transactionDirection == .unknown { return amount }
+        return normalizedAmount
+    }
+
+    /// Applies a `TransactionNormalizer` result to the stored fields.
+    func applyNormalization(_ normalized: NormalizedTransaction, accountType: AccountType) {
+        self.normalizedAmount = normalized.normalizedAmount
+        self.transactionDirection = normalized.direction
+        self.accountType = accountType
+        self.countsAsSpending = normalized.countsAsSpending
+        self.needsDirectionReview = normalized.needsReview
     }
 }

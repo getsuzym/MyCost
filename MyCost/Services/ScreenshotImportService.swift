@@ -23,6 +23,9 @@ struct ScreenshotImportResult {
     /// The date used for year inference — pass to `replaceCandidates` so drafts
     /// resolve dates the same way.
     let referenceDate: Date
+    /// Which layout profile configured the parser (`Generic` unless a bank
+    /// signature was recognized).
+    let layoutProfileName: String
 }
 
 enum ScreenshotImportError: LocalizedError, Equatable {
@@ -68,14 +71,22 @@ struct ScreenshotImportService {
             // with no year ("Aug 28") is consistently placed in the current
             // statement year everywhere it's parsed.
             let referenceDate = referenceDateOverride ?? now()
-            let grouper = TransactionGrouper(referenceDate: referenceDate)
+
+            let observations = textBlocks.map(OCRTextObservation.init(block:))
+            let regions = regionDetector.detectRegions(from: observations)
+            let originalOCRText = observations.map(\.text).joined(separator: "\n")
+
+            // Pick a layout profile from a bank signature in the text; unknown
+            // layouts get the generic configuration.
+            let profile = BankLayoutProfile.identify(in: originalOCRText)
+            let grouper = TransactionGrouper(
+                referenceDate: referenceDate,
+                configuration: profile.grouperConfiguration
+            )
             let flatParser = TransactionCandidateParser(referenceDate: referenceDate)
 
             // Primary path: use the OCR bounding boxes to reconstruct the
             // statement's visual rows and group each transaction spatially.
-            let observations = textBlocks.map(OCRTextObservation.init(block:))
-            let regions = regionDetector.detectRegions(from: observations)
-            let originalOCRText = observations.map(\.text).joined(separator: "\n")
             var candidates = grouper.candidates(from: regions, originalOCRText: originalOCRText)
             var usedSpatialGrouping = true
 
@@ -93,7 +104,8 @@ struct ScreenshotImportService {
                 regions: regions,
                 transactionCandidates: candidates,
                 usedSpatialGrouping: usedSpatialGrouping,
-                referenceDate: referenceDate
+                referenceDate: referenceDate,
+                layoutProfileName: profile.name
             )
         } catch let error as ScreenshotImportError {
             throw error

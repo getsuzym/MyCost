@@ -49,9 +49,12 @@ struct SpendingAnalytics {
 
         // Half-open [start, end): DateInterval.contains is end-inclusive, which
         // would double-count a transaction dated exactly at 00:00 on the 1st of
-        // the next month into both months.
+        // the next month into both months. Non-spending transactions (credit-card
+        // payments, deposits, payroll) are excluded — analytics use each row's
+        // account-type-normalized `spendingAmount`, not the raw bank sign.
         let includedTransactions = transactions.filter {
             !$0.isExcluded &&
+            $0.countsAsSpending &&
             $0.transactionDate >= interval.start &&
             $0.transactionDate < interval.end
         }
@@ -60,11 +63,11 @@ struct SpendingAnalytics {
         let pendingTransactions = includedTransactions.filter { $0.status == .pending }
         let recurringTransactions = includedTransactions.filter(\.isRecurring)
         let nonRecurringTransactions = includedTransactions.filter { !$0.isRecurring }
-        let postedTotal = postedTransactions.reduce(Decimal.zero) { $0 + $1.amount }
-        let pendingTotal = pendingTransactions.reduce(Decimal.zero) { $0 + $1.amount }
-        let recurringTotal = recurringTransactions.reduce(Decimal.zero) { $0 + $1.amount }
-        let nonRecurringTotal = nonRecurringTransactions.reduce(Decimal.zero) { $0 + $1.amount }
-        let total = includedTransactions.reduce(Decimal.zero) { $0 + $1.amount }
+        let postedTotal = postedTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        let pendingTotal = pendingTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        let recurringTotal = recurringTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        let nonRecurringTotal = nonRecurringTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        let total = includedTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
         let expectedMonthlyRecurringTotal = recurringPayments
             .filter(\.isActive)
             .reduce(Decimal.zero) { total, recurringPayment in
@@ -77,7 +80,7 @@ struct SpendingAnalytics {
         .map { categoryName, transactions in
             CategorySpend(
                 categoryName: categoryName,
-                amount: transactions.reduce(Decimal.zero) { $0 + $1.amount }
+                amount: transactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
             )
         }
         .sorted { $0.amount > $1.amount }

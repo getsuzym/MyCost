@@ -9,6 +9,9 @@ struct OCRDraftImportOutcome: Equatable {
     var mergedTransactionIDs: [UUID] = []
     var skippedIncompleteCount: Int = 0
     var learnedRuleCount: Int = 0
+    /// Inserted transactions whose sign/description was ambiguous for the
+    /// account type — surfaced so the user can confirm direction.
+    var reviewFlaggedCount: Int = 0
     /// Count from a fresh fetch AFTER `save()` — the ground truth that the
     /// records are in the shared store.
     var persistedTransactionCount: Int = 0
@@ -29,12 +32,14 @@ struct OCRDraftImportOutcome: Equatable {
 /// deselecting the draft.
 struct OCRTransactionImportService {
     private let ruleService = MerchantRuleService()
+    private let normalizer = TransactionNormalizer()
     private let logger = Logger(subsystem: "com.getsuzym.MyCost", category: "OCRImport")
 
     @MainActor
     func importDrafts(
         _ drafts: [OCRTransactionDraft],
         categories: [Category],
+        accountTypesByName: [String: AccountType] = [:],
         existingTransactions: [Transaction],
         existingRules: [MerchantRule],
         modelContext: ModelContext
@@ -59,6 +64,12 @@ struct OCRTransactionImportService {
                 logger.debug("import: merged into existing \(target.id, privacy: .public)")
             } else {
                 let isPossibleDuplicate = draft.duplicateSummary != nil && draft.duplicateDecision != .keepBoth
+                let accountType = accountTypesByName[draft.trimmedAccountName] ?? .other
+                let normalized = normalizer.normalize(
+                    originalAmount: amount,
+                    accountType: accountType,
+                    description: draft.sourceText.isEmpty ? draft.trimmedMerchantName : draft.sourceText
+                )
                 let transaction = Transaction(
                     accountName: draft.trimmedAccountName,
                     merchantName: draft.trimmedMerchantName,
@@ -67,10 +78,16 @@ struct OCRTransactionImportService {
                     transactionDate: draft.transactionDate,
                     status: draft.status,
                     duplicateState: isPossibleDuplicate ? .possibleDuplicate : .unique,
+                    normalizedAmount: normalized.normalizedAmount,
+                    transactionDirection: normalized.direction,
+                    accountType: accountType,
+                    countsAsSpending: normalized.countsAsSpending,
+                    needsDirectionReview: normalized.needsReview,
                     category: category
                 )
                 modelContext.insert(transaction)
                 outcome.insertedTransactionIDs.append(transaction.id)
+                if normalized.needsReview { outcome.reviewFlaggedCount += 1 }
                 logger.debug("""
                 import: inserted "\(transaction.merchantName, privacy: .public)" \
                 \(transaction.amount as NSDecimalNumber, privacy: .public) \

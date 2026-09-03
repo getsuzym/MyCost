@@ -106,12 +106,26 @@ struct TransactionTextHeuristics {
                 date: date,
                 originalText: match,
                 confidence: pattern.hasYear ? 0.95 : 0.75,
-                inferredYear: !pattern.hasYear,
+                inferredYear: pattern.infersYear,
                 ambiguous: pattern.isNumericWithoutYear
             )
         }
 
         return .none
+    }
+
+    /// True when `text`, ignoring surrounding punctuation/bullets, is essentially
+    /// just a date value ("Sep 2", "09/02", "2026-09-02", "Today"). Used to keep
+    /// a recognized date from ever being stored as a merchant name.
+    func isEssentiallyJustADate(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: Self.chevronAndBulletCharacters.union(.whitespacesAndNewlines))
+        guard !trimmed.isEmpty else { return false }
+        let detection = detectDate(in: trimmed)
+        guard let original = detection.originalText, detection.date != nil else { return false }
+        let remainder = trimmed
+            .replacingOccurrences(of: original, with: " ", options: [.caseInsensitive])
+            .trimmingCharacters(in: Self.chevronAndBulletCharacters.union(.whitespacesAndNewlines).union(CharacterSet(charactersIn: ",")))
+        return remainder.count <= 2
     }
 
     private func parseDate(_ text: String, pattern: DatePattern) -> Date? {
@@ -121,6 +135,8 @@ struct TransactionTextHeuristics {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch pattern {
+        case .relativeWord:
+            return relativeDate(from: normalized)
         case .iso:
             return date(from: normalized, formats: ["yyyy-MM-dd"])
         case .numericWithYear:
@@ -131,6 +147,16 @@ struct TransactionTextHeuristics {
             return date(from: normalized, formats: ["MMM d yyyy", "MMMM d yyyy"])
         case .monthNameWithoutYear:
             return dateByInferringYear(monthDayText: normalized, formats: ["MMM d", "MMMM d"])
+        }
+    }
+
+    private func relativeDate(from text: String) -> Date? {
+        let today = calendar.startOfDay(for: referenceDate)
+        switch text.lowercased() {
+        case "today": return today
+        case "yesterday": return calendar.date(byAdding: .day, value: -1, to: today)
+        case "tomorrow": return calendar.date(byAdding: .day, value: 1, to: today)
+        default: return nil
         }
     }
 
@@ -264,6 +290,7 @@ struct TransactionTextHeuristics {
 }
 
 private enum DatePattern: CaseIterable {
+    case relativeWord
     case iso
     case numericWithYear
     case numericWithoutYear
@@ -272,6 +299,8 @@ private enum DatePattern: CaseIterable {
 
     var regex: String {
         switch self {
+        case .relativeWord:
+            #"\b(?:today|yesterday|tomorrow)\b"#
         case .iso:
             #"\b\d{4}-\d{1,2}-\d{1,2}\b"#
         case .numericWithYear:
@@ -285,11 +314,23 @@ private enum DatePattern: CaseIterable {
         }
     }
 
+    /// The pattern carries an explicit year (or, for relative words, needs no
+    /// year inference at all).
     var hasYear: Bool {
         switch self {
-        case .iso, .numericWithYear, .monthNameWithYear:
+        case .relativeWord, .iso, .numericWithYear, .monthNameWithYear:
             true
         case .numericWithoutYear, .monthNameWithoutYear:
+            false
+        }
+    }
+
+    /// Whether the resolved date had its year guessed.
+    var infersYear: Bool {
+        switch self {
+        case .numericWithoutYear, .monthNameWithoutYear:
+            true
+        case .relativeWord, .iso, .numericWithYear, .monthNameWithYear:
             false
         }
     }

@@ -13,13 +13,17 @@ struct TransactionEditorView: View {
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
+    @Query(sort: \Account.name) private var accounts: [Account]
 
     let mode: TransactionEditorMode
     /// For `.add`: the date the new transaction should start on (e.g. the month
     /// the user opened). Ignored for `.edit`.
     var initialDate: Date?
+    /// For `.add`: preselect this category (e.g. opened from a category page).
+    var initialCategoryID: UUID?
 
     @State private var accountName = "Default"
+    @State private var accountType: AccountType = .other
     @State private var merchantName = ""
     @State private var amountText = ""
     @State private var transactionDate = Date()
@@ -31,6 +35,9 @@ struct TransactionEditorView: View {
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
     @State private var customIntervalDays = 30
     @State private var note = ""
+    @State private var countsAsSpending = true
+    /// Set once from the normalizer; cleared if the user overrides `countsAsSpending`.
+    @State private var directionIsUserSet = false
     @State private var validationMessage: String?
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
@@ -38,7 +45,19 @@ struct TransactionEditorView: View {
 
     private let duplicateMatchingService = DuplicateMatchingService()
     private let merchantRuleService = MerchantRuleService()
+    private let accountService = AccountService()
     private let recurringSuggestionService = RecurringPaymentSuggestionService()
+    private let normalizer = TransactionNormalizer()
+
+    /// Live account-type-aware interpretation of the entered amount.
+    private var normalization: NormalizedTransaction {
+        let amount = Decimal(string: amountText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        return normalizer.normalize(
+            originalAmount: amount,
+            accountType: accountType,
+            description: merchantName
+        )
+    }
 
     /// Active categories plus, when editing, whichever hidden category is
     /// currently assigned so it stays visible until changed.
@@ -59,13 +78,23 @@ struct TransactionEditorView: View {
                 TextField("Account", text: $accountName)
                     .textInputAutocapitalization(.words)
                     .accessibilityIdentifier("transactionEditor.account")
+                    .onChange(of: accountName) { _, newValue in
+                        accountType = accountService.resolveType(for: newValue, in: accounts)
+                    }
+
+                Picker("Account Type", selection: $accountType) {
+                    ForEach(AccountType.allCases) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .accessibilityIdentifier("transactionEditor.accountType")
 
                 TextField("Merchant", text: $merchantName)
                     .textInputAutocapitalization(.words)
                     .accessibilityIdentifier("transactionEditor.merchant")
 
-                TextField("Amount", text: $amountText)
-                    .keyboardType(.decimalPad)
+                TextField("Amount (as shown by the bank)", text: $amountText)
+                    .keyboardType(.numbersAndPunctuation)
                     .accessibilityIdentifier("transactionEditor.amount")
 
                 DatePicker("Date", selection: $transactionDate, displayedComponents: .date)
@@ -75,6 +104,25 @@ struct TransactionEditorView: View {
                         Text(status.label).tag(status)
                     }
                 }
+            }
+
+            Section {
+                Toggle("Counts as spending", isOn: $countsAsSpending)
+                    .accessibilityIdentifier("transactionEditor.countsAsSpending")
+                    .onChange(of: countsAsSpending) { _, _ in directionIsUserSet = true }
+                LabeledContent("Spending amount") {
+                    Text(Formatters.currencyString(for: countsAsSpending ? normalization.normalizedAmount : 0))
+                        .foregroundStyle(.secondary)
+                }
+                if !directionIsUserSet, normalization.needsReview {
+                    Label("The sign is unusual for a \(accountType.label) account — confirm whether this is spending.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Direction")
+            } footer: {
+                Text("Credit-card purchases are positive spending; debit purchases are negative. Payments, transfers, and deposits don't count as spending.")
             }
 
             Section("Category") {
@@ -189,10 +237,15 @@ struct TransactionEditorView: View {
     private func loadInitialValues() {
         guard case .edit(let transaction) = mode else {
             if let initialDate { transactionDate = initialDate }
+            if let initialCategoryID { selectedCategoryID = initialCategoryID }
+            accountType = accountService.resolveType(for: accountName, in: accounts)
             return
         }
 
         accountName = transaction.accountName
+        accountType = transaction.accountType != .other
+            ? transaction.accountType
+            : accountService.resolveType(for: transaction.accountName, in: accounts)
         merchantName = transaction.merchantName
         amountText = NSDecimalNumber(decimal: transaction.amount).stringValue
         transactionDate = transaction.transactionDate
@@ -204,6 +257,24 @@ struct TransactionEditorView: View {
         recurrenceFrequency = transaction.recurringPayment?.frequency ?? .monthly
         customIntervalDays = transaction.recurringPayment?.customIntervalDays ?? 30
         note = transaction.note
+        countsAsSpending = transaction.countsAsSpending
+        // Treat an existing row's stored choice as user-set so we don't nag.
+        directionIsUserSet = true
+    }
+
+    /// Writes normalized direction fields onto `transaction`. Honors a manual
+    /// `countsAsSpending` override; otherwise uses the normalizer verdict.
+    private func applyDirection(to transaction: Transaction) {
+        let normalized = normalization
+        if directionIsUserSet {
+            transaction.normalizedAmount = countsAsSpending ? normalized.normalizedAmount : 0
+            transaction.transactionDirection = normalized.direction
+            transaction.accountType = accountType
+            transaction.countsAsSpending = countsAsSpending
+            transaction.needsDirectionReview = false
+        } else {
+            transaction.applyNormalization(normalized, accountType: accountType)
+        }
     }
 
     private func save() {
@@ -220,6 +291,14 @@ struct TransactionEditorView: View {
         }
 
         let selectedCategory = categories.first { $0.id == selectedCategoryID }
+
+        // Remember the account type for future imports/edits.
+        accountService.upsert(
+            name: trimmedAccountName.isEmpty ? "Default" : trimmedAccountName,
+            type: accountType,
+            in: accounts,
+            modelContext: modelContext
+        )
 
         switch mode {
         case .add:
@@ -276,6 +355,7 @@ struct TransactionEditorView: View {
             transaction.isRecurring = isRecurring
             transaction.note = note
             transaction.updatedAt = .now
+            applyDirection(to: transaction)
             updateRecurringPayment(
                 for: transaction,
                 category: selectedCategory,
@@ -325,6 +405,7 @@ struct TransactionEditorView: View {
             transaction.category = categories.first { $0.id == pendingManualDraft.selectedCategoryID }
             transaction.duplicateState = .unique
             transaction.updatedAt = .now
+            applyDirection(to: transaction)
             saveAndDismiss()
             return
         }
@@ -353,6 +434,7 @@ struct TransactionEditorView: View {
             category: selectedCategory
         )
         modelContext.insert(transaction)
+        applyDirection(to: transaction)
         updateRecurringPayment(
             for: transaction,
             category: selectedCategory,

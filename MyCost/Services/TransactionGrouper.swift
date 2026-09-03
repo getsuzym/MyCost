@@ -14,7 +14,7 @@ import Foundation
 /// amounts, the candidate is marked uncertain (`.ambiguousLayout`,
 /// `.multipleAmounts`) rather than guessing.
 struct TransactionGrouper {
-    struct Configuration {
+    struct Configuration: Equatable {
         /// An amount observation counts as right-aligned if its horizontal
         /// center is past this fraction of the region width, or its right edge
         /// is within `rightEdgeSlack` of the region's right edge.
@@ -151,10 +151,17 @@ struct TransactionGrouper {
         }
 
         let removable = (dateMatch.originalText.map { [$0] } ?? []) + amountObservations.map(\.text)
-        let merchant = heuristics.cleanMerchantDescription(
+        var merchant = heuristics.cleanMerchantDescription(
             from: merchantRows.joined(separator: " "),
             removing: removable
         )
+
+        // Field-pattern guard: a value that is itself just a date ("Sep 2",
+        // "09/02", "Today") is never the merchant — leave it blank for review.
+        if !merchant.isEmpty, heuristics.isEssentiallyJustADate(merchant) {
+            merchant = ""
+            flags.insert(.possibleNonTransactionLine)
+        }
 
         if merchant.isEmpty { flags.insert(.missingMerchantDescription) }
         confidence.merchantDescription = merchant.isEmpty ? 0 : (merchantRows.count > 1 ? 0.78 : 0.85)

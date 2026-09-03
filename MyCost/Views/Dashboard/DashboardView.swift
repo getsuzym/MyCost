@@ -86,7 +86,7 @@ struct DashboardView: View {
                         MonthDetailView(month: monthStart)
                     } label: {
                         let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
-                        let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.amount }
+                        let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.spendingAmount }
                         HStack {
                             Text(Formatters.month.string(from: monthStart))
                             Spacer()
@@ -129,11 +129,16 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(summary.categoryTotals) { categoryTotal in
-                    MetricRow(
-                        title: categoryTotal.categoryName,
-                        value: Formatters.currencyString(for: categoryTotal.amount),
-                        systemImage: "tag"
-                    )
+                    NavigationLink {
+                        CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
+                    } label: {
+                        MetricRow(
+                            title: categoryTotal.categoryName,
+                            value: Formatters.currencyString(for: categoryTotal.amount),
+                            systemImage: "tag"
+                        )
+                    }
+                    .accessibilityIdentifier("dashboard.category")
                 }
             }
 
