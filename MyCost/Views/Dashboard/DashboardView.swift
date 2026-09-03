@@ -118,23 +118,6 @@ struct DashboardView: View {
                 }
             }
 
-            Section("Range") {
-                MetricTile(
-                    title: "Highest",
-                    value: summary.highestCategory.map { Formatters.currencyString(for: $0.amount) } ?? "None",
-                    systemImage: "arrow.up.forward",
-                    tint: Theme.warning,
-                    caption: summary.highestCategory?.categoryName
-                )
-                MetricTile(
-                    title: "Lowest",
-                    value: summary.lowestCategory.map { Formatters.currencyString(for: $0.amount) } ?? "None",
-                    systemImage: "arrow.down.forward",
-                    tint: Theme.positive,
-                    caption: summary.lowestCategory?.categoryName
-                )
-            }
-
             Section {
                 if months.isEmpty {
                     Text("No transactions yet.")

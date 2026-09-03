@@ -25,8 +25,8 @@ third-party analytics — all data stays on device.
   quarterly / yearly / every-N-months / Nth-weekday-of-month / Nth-business-day.
   The Recurring tab is scoped to a selected month and shows expected vs. actual
   occurrences with a paid indicator.
-- **Dashboard** — month total, spend-by-category (donut + %), highest/lowest
-  category, recurring vs. non-recurring, category drill-down.
+- **Dashboard** — month total, spend-by-category (donut + %), recurring vs.
+  non-recurring, category drill-down.
 - **Categories** — dynamic records with a protected "Uncategorized" fallback;
   deleting a category reassigns its references rather than dropping them.
 
