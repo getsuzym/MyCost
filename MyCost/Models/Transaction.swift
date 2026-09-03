@@ -149,6 +149,9 @@ final class Transaction {
     /// The bank's sign/description was unusual for the account type; the user
     /// should confirm the direction.
     var needsDirectionReview: Bool = false
+    /// The user set "Counts as spending" by hand in the editor — freeze it,
+    /// don't let the recurring re-check below override the choice.
+    var spendingCountOverridden: Bool = false
 
     var category: Category?
     var recurringPayment: RecurringPayment?
@@ -172,6 +175,7 @@ final class Transaction {
         accountType: AccountType = .other,
         countsAsSpending: Bool = true,
         needsDirectionReview: Bool = false,
+        spendingCountOverridden: Bool = false,
         category: Category? = nil,
         recurringPayment: RecurringPayment? = nil,
         createdAt: Date = .now,
@@ -195,6 +199,7 @@ final class Transaction {
         self.accountTypeRawValue = accountType.rawValue
         self.countsAsSpending = countsAsSpending
         self.needsDirectionReview = needsDirectionReview
+        self.spendingCountOverridden = spendingCountOverridden
         self.category = category
         self.recurringPayment = recurringPayment
         self.createdAt = createdAt
@@ -215,27 +220,42 @@ final class Transaction {
         set { accountTypeRawValue = newValue.rawValue }
     }
 
-    /// Whether this row is part of spending totals at all: either the
-    /// normalizer counted it, or the user explicitly marked it **recurring**
-    /// while the sign normalizer was uncertain (`needsDirectionReview` / an
-    /// `.unknown` direction). Marking something recurring is an explicit "this
-    /// is a regular expense" assertion that outranks a keyword guess — so a
-    /// mortgage / rent / bill payment the normalizer zeroed still counts.
-    var contributesToSpending: Bool {
-        countsAsSpending || (isRecurring && (needsDirectionReview || transactionDirection == .unknown))
+    /// The normalizer verdict re-evaluated against the **current** rules, so
+    /// narrowing a keyword list retroactively fixes already-imported rows
+    /// without a migration.
+    private var currentNormalization: NormalizedTransaction {
+        TransactionNormalizer().normalize(
+            originalAmount: amount,
+            accountType: accountType,
+            description: originalDescription.isEmpty ? merchantName : originalDescription
+        )
     }
 
-    /// The value analytics should sum. Zero when the transaction doesn't
-    /// contribute (payments to a card, deposits). Rows that never went through
-    /// `TransactionNormalizer` (legacy data, or a direct `amount` edit) have
-    /// `transactionDirection == .unknown` and fall back to the raw `amount`.
-    /// A recurring row rescued by `contributesToSpending` counts at its
-    /// bank magnitude.
+    /// Whether this row is part of spending totals at all. The normalizer's
+    /// count wins; otherwise a **recurring** row is rescued when the current
+    /// rules would count it, when it's a recurring credit/refund, or when its
+    /// sign was flagged uncertain at import. A hand override (`spendingCountOverridden`)
+    /// and a confidently-detected deposit / card payoff are never rescued.
+    var contributesToSpending: Bool {
+        if countsAsSpending { return true }
+        if spendingCountOverridden { return false }
+        guard isRecurring else { return false }
+        let n = currentNormalization
+        return n.countsAsSpending || n.normalizedAmount < 0 || needsDirectionReview
+    }
+
+    /// The value analytics should sum. Zero when the row doesn't contribute
+    /// (card payoffs, deposits). Legacy rows (`.unknown` direction) fall back to
+    /// `amount`. A rescued recurring row is summed at the current normalizer's
+    /// value, else its bank magnitude.
     var spendingAmount: Decimal {
         guard contributesToSpending else { return 0 }
         if countsAsSpending {
             return transactionDirection == .unknown ? amount : normalizedAmount
         }
+        let n = currentNormalization
+        if n.normalizedAmount < 0 { return n.normalizedAmount } // a recurring credit/refund
+        if n.countsAsSpending { return n.normalizedAmount }
         return abs(amount)
     }
 

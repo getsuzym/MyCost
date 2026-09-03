@@ -280,6 +280,7 @@ struct TransactionEditorView: View {
             transaction.accountType = accountType
             transaction.countsAsSpending = countsAsSpending
             transaction.needsDirectionReview = false
+            transaction.spendingCountOverridden = true
         } else {
             transaction.applyNormalization(normalized, accountType: accountType)
         }
