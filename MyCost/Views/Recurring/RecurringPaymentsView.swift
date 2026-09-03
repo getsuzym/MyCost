@@ -207,6 +207,11 @@ struct RecurringPaymentsView: View {
             }
         }
         .navigationTitle("Recurring")
+        .refreshable {
+            // Occurrence / paid status is recomputed on every render from live
+            // @Query data; this gives the pull-down its spinner.
+            try? await Task.sleep(for: .milliseconds(400))
+        }
         .sheet(item: $editingPayment) { payment in
             NavigationStack {
                 RecurringPaymentEditorView(payment: payment, categories: categories)

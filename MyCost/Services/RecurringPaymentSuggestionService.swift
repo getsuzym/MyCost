@@ -130,7 +130,14 @@ struct RecurringPaymentSuggestionService {
 
             let seriesKey = Self.matchKey(accountName: series.accountName, merchantName: series.merchantName)
             let actualCount = recurringTransactions.filter { transaction in
-                Self.matchKey(accountName: transaction.accountName, merchantName: transaction.merchantName) == seriesKey
+                // An explicit link wins: a transaction attached to a series
+                // counts for that series even if its (possibly renamed) merchant
+                // no longer matches the series key. Otherwise fall back to the
+                // account + normalized-merchant match.
+                if let linkedID = transaction.recurringPayment?.id {
+                    return linkedID == series.id
+                }
+                return Self.matchKey(accountName: transaction.accountName, merchantName: transaction.merchantName) == seriesKey
             }.count
 
             for (index, occurrenceDate) in dates.enumerated() {

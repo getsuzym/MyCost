@@ -847,6 +847,43 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(septemberOnly.remainingTotal, Decimal(string: "1755.34")!)
     }
 
+    func testATransactionLinkedToASeriesCountsEvenAfterItsNameChanged() throws {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage()
+        context.insert(mortgage)
+
+        // The bank renamed the merchant, so the key no longer matches the
+        // series — but it's explicitly linked to it.
+        let renamed = Transaction(
+            accountName: "Chequing",
+            merchantName: "HOME LOAN PMT 4471",
+            originalDescription: "HOME LOAN PMT 4471",
+            amount: Decimal(string: "877.67")!,
+            transactionDate: date(2026, 9, 4),
+            isRecurring: true,
+            recurringPayment: mortgage
+        )
+        context.insert(renamed)
+        try context.save()
+
+        let expectation = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [renamed],
+            inMonthContaining: date(2026, 9, 15)
+        )
+        XCTAssertEqual(expectation.completedCount, 1)   // counted via the link, not the name
+
+        // A different unlinked transaction with a non-matching name still doesn't count.
+        let stranger = mortgagePayment(on: 18, month: 9)
+        stranger.merchantName = "SOMETHING ELSE"
+        let withStranger = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [renamed, stranger],
+            inMonthContaining: date(2026, 9, 15)
+        )
+        XCTAssertEqual(withStranger.completedCount, 1)
+    }
+
     func testSwitchingMonthsUpdatesExpectedActualAndRemainingConsistently() {
         let service = RecurringPaymentSuggestionService()
         let mortgage = biweeklyMortgage(amount: 100)

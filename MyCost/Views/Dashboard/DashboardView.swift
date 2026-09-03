@@ -165,6 +165,11 @@ struct DashboardView: View {
             }
         }
         .navigationTitle("Dashboard")
+        .refreshable {
+            // Totals are @Query-derived and always live; this just gives the
+            // pull-down gesture its spinner and a fresh recompute.
+            try? await Task.sleep(for: .milliseconds(400))
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
