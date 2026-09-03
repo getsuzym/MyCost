@@ -13,11 +13,13 @@ struct ImportView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
+    @Query(sort: \Account.name) private var accounts: [Account]
 
     private enum Phase: Equatable {
         case idle
         case preview
         case processing
+        case accountType
         case done
     }
 
@@ -28,6 +30,11 @@ struct ImportView: View {
     @State private var summaryMessage: String?
     @State private var failures: [BatchScreenshotFailure] = []
     @State private var errorMessage: String?
+    @State private var accountGuess = AccountTypeSuggestion(type: .other, isConfident: false)
+    @State private var pickedAccountType: AccountType = .other
+    @State private var pendingDetectedCount = 0
+
+    private let accountService = AccountService()
 
     private let batchService = ScreenshotBatchImportService()
 
@@ -40,6 +47,8 @@ struct ImportView: View {
                 previewSection
             case .processing:
                 processingSection
+            case .accountType:
+                accountTypeSection
             case .done:
                 doneSection
             }
@@ -170,6 +179,63 @@ struct ImportView: View {
         }
     }
 
+    /// One quick confirm after processing, shown only for an account the app
+    /// hasn't seen before. The type is guessed from the amount signs; the user
+    /// confirms or corrects, then Review opens with amounts already normalized.
+    @ViewBuilder
+    private var accountTypeSection: some View {
+        Section {
+            Label(accountGuessHeadline, systemImage: accountGuess.isConfident ? "checkmark.seal" : "questionmark.circle")
+                .font(.callout)
+
+            Picker("Account type", selection: $pickedAccountType) {
+                ForEach(AccountType.allCases) { type in
+                    Text(type.label).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("import.accountType")
+
+            Button {
+                ocrReviewStore.pendingDefaultAccountType = pickedAccountType
+                nav.finishImportProcessing(detectedCount: pendingDetectedCount)
+            } label: {
+                Label("Looks Right \u{2014} Continue", systemImage: "arrow.right.circle.fill")
+            }
+            .accessibilityIdentifier("import.confirmAccountType")
+        } header: {
+            Text("Account Type")
+        } footer: {
+            Text("How this account shows purchases. Credit-card purchases are positive; chequing/debit purchases are negative. Saved and reused for this account next time \u{2014} you can still change it per account in Review.")
+        }
+    }
+
+    private var accountGuessHeadline: String {
+        switch (accountGuess.type, accountGuess.isConfident) {
+        case (.creditCard, true):
+            "These screenshots look like a credit card \u{2014} purchases shown as positive."
+        case (.debit, true):
+            "These screenshots look like a chequing/debit account \u{2014} purchases shown as negative."
+        case (.creditCard, false), (.debit, false):
+            "Best guess is selected below \u{2014} please confirm."
+        default:
+            "Choose how this account shows purchases."
+        }
+    }
+
+    /// The remembered type when **every** account in the batch is already known,
+    /// so the confirm step can be skipped entirely.
+    private func knownDefaultAccountType() -> AccountType? {
+        let names = Set(ocrReviewStore.drafts.map(\.trimmedAccountName))
+        guard !names.isEmpty else { return nil }
+        var resolved: AccountType?
+        for name in names {
+            guard let account = accountService.account(named: name, in: accounts) else { return nil }
+            resolved = account.accountType
+        }
+        return resolved
+    }
+
     /// Only reached when **nothing** was detected — otherwise processing routes
     /// straight to Review. Lets the user retry or bail out.
     @ViewBuilder
@@ -254,10 +320,17 @@ struct ImportView: View {
             if result.candidates.isEmpty {
                 // Nothing to review — stay here so the user can retry.
                 phase = .done
-            } else {
-                // Auto-navigate to the persistent Review session (even if some
-                // screenshots failed — Review shows the warning).
+            } else if let knownType = knownDefaultAccountType() {
+                // Account already known — normalize with its type, skip the ask.
+                ocrReviewStore.pendingDefaultAccountType = knownType
                 nav.finishImportProcessing(detectedCount: result.candidates.count)
+            } else {
+                // New account — confirm how it shows purchases before Review, so
+                // amounts come in already normalized (no sign-ambiguity flags).
+                accountGuess = AccountService.guessAccountType(fromAmounts: result.candidates.compactMap(\.amount))
+                pickedAccountType = accountGuess.type
+                pendingDetectedCount = result.candidates.count
+                phase = .accountType
             }
         }
     }
@@ -268,6 +341,9 @@ struct ImportView: View {
         summaryMessage = nil
         progress = nil
         errorMessage = nil
+        accountGuess = AccountTypeSuggestion(type: .other, isConfident: false)
+        pickedAccountType = .other
+        pendingDetectedCount = 0
         phase = .idle
     }
 }

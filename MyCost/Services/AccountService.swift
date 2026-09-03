@@ -20,6 +20,30 @@ struct AccountService {
         account(named: name, in: accounts)?.accountType ?? .other
     }
 
+    /// Guess how an account shows purchases from a batch of detected amounts,
+    /// so the import sheet can pre-fill the account-type step. Credit-card
+    /// statements run mostly positive (purchases +, payments −); chequing/debit
+    /// statements run mostly negative (purchases −, deposits +). An unclear or
+    /// tiny sample yields `.other` with `isConfident == false`.
+    static func guessAccountType(fromAmounts amounts: [Decimal]) -> AccountTypeSuggestion {
+        let nonZero = amounts.filter { $0 != 0 }
+        guard nonZero.count >= 2 else {
+            return AccountTypeSuggestion(type: .other, isConfident: false)
+        }
+
+        let positives = nonZero.filter { $0 > 0 }.count
+        let negatives = nonZero.count - positives
+        let total = Double(nonZero.count)
+
+        if Double(positives) / total >= 0.75 {
+            return AccountTypeSuggestion(type: .creditCard, isConfident: nonZero.count >= 3)
+        }
+        if Double(negatives) / total >= 0.75 {
+            return AccountTypeSuggestion(type: .debit, isConfident: nonZero.count >= 3)
+        }
+        return AccountTypeSuggestion(type: .other, isConfident: false)
+    }
+
     /// Creates the account if it doesn't exist, or updates its type. Does not
     /// call `save()` unless `saveImmediately` (the caller usually saves once).
     @MainActor
@@ -60,6 +84,13 @@ struct AccountService {
         account.updatedAt = .now
         try modelContext.save()
     }
+}
+
+struct AccountTypeSuggestion: Equatable {
+    var type: AccountType
+    /// The amount signs pointed clearly one way on a large-enough sample. When
+    /// `false`, the import sheet asks the user to confirm rather than assert.
+    var isConfident: Bool
 }
 
 enum AccountError: LocalizedError, Equatable {

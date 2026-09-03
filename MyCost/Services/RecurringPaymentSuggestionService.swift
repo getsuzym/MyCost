@@ -16,6 +16,45 @@ struct RecurringPaymentSuggestion: Identifiable, Equatable {
     var id: String { "\(accountName)|\(merchantName)" }
 }
 
+/// The Recurring page's view of one selected calendar month. Every field is
+/// scoped to that month only — `occurrences` never contains a date outside it,
+/// and the totals sum only those occurrences.
+struct RecurringMonthExpectation: Equatable {
+    struct Occurrence: Identifiable, Equatable {
+        let seriesID: UUID
+        let merchantName: String
+        let accountName: String
+        let categoryName: String?
+        let date: Date
+        let amount: Decimal
+        /// A matching actual recurring transaction exists in the same month.
+        let isMatched: Bool
+
+        /// Value-derived (safe for `ForEach` over a recomputed array).
+        var id: String { "\(seriesID.uuidString)|\(date.timeIntervalSinceReferenceDate)" }
+    }
+
+    /// Expected occurrences in the selected month, earliest first.
+    var occurrences: [Occurrence]
+    /// Σ amount of `occurrences`.
+    var expectedTotal: Decimal
+    /// Σ amount of the occurrences already covered by an actual transaction.
+    var matchedTotal: Decimal
+    /// `expectedTotal - matchedTotal`.
+    var remainingTotal: Decimal
+    /// `occurrences.count`.
+    var expectedCount: Int
+    /// Number of occurrences matched to an actual transaction this month.
+    var completedCount: Int
+
+    var remainingCount: Int { max(0, expectedCount - completedCount) }
+
+    static let empty = RecurringMonthExpectation(
+        occurrences: [], expectedTotal: 0, matchedTotal: 0, remainingTotal: 0,
+        expectedCount: 0, completedCount: 0
+    )
+}
+
 struct RecurringPaymentSuggestionService {
     private let calendar: Calendar
 
@@ -41,6 +80,122 @@ struct RecurringPaymentSuggestionService {
         recurringPayment.expectedAmount * Decimal(
             recurringPayment.frequency.monthlyMultiplier(customIntervalDays: recurringPayment.customIntervalDays)
         )
+    }
+
+    /// The series' expected occurrence dates that fall **inside the calendar
+    /// month** containing `date` — nothing from the month before or after. Walks
+    /// the real cadence (frequency + `customIntervalDays`) from an anchor (the
+    /// series' most recent transaction, else `nextExpectedDate`, else
+    /// `createdAt`), so a biweekly series yields 2 or 3 dates depending on the
+    /// month, a monthly series 1, and quarterly / yearly 0 in an off month.
+    func expectedOccurrenceDates(for recurringPayment: RecurringPayment, inMonthContaining date: Date) -> [Date] {
+        guard recurringPayment.frequency != .none else { return [] }
+        guard let month = calendar.dateInterval(of: .month, for: date) else { return [] }
+
+        let frequency = recurringPayment.frequency
+        let interval = recurringPayment.customIntervalDays
+        var cursor = occurrenceAnchor(for: recurringPayment)
+
+        // Step back to the last occurrence strictly before the month begins.
+        var guardRail = 0
+        while cursor >= month.start, guardRail < 1_000 {
+            guard let previous = frequency.previousDate(before: cursor, calendar: calendar, customIntervalDays: interval) else { break }
+            cursor = previous
+            guardRail += 1
+        }
+
+        // Step forward, collecting only the occurrences that fall in the month.
+        var dates: [Date] = []
+        guardRail = 0
+        while guardRail < 1_000 {
+            guard let next = frequency.nextDate(after: cursor, calendar: calendar, customIntervalDays: interval) else { break }
+            cursor = next
+            guardRail += 1
+            if cursor >= month.end { break }
+            if cursor >= month.start { dates.append(cursor) }
+        }
+        return dates
+    }
+
+    /// How many times this series is expected to land in the month containing
+    /// `date` (count of `expectedOccurrenceDates`).
+    func occurrenceCount(for recurringPayment: RecurringPayment, inMonthContaining date: Date) -> Int {
+        expectedOccurrenceDates(for: recurringPayment, inMonthContaining: date).count
+    }
+
+    /// The projected spend for this series in the calendar month containing
+    /// `date`: `occurrenceCount × expectedAmount`.
+    func expectedAmount(for recurringPayment: RecurringPayment, inMonthContaining date: Date) -> Decimal {
+        Decimal(occurrenceCount(for: recurringPayment, inMonthContaining: date)) * recurringPayment.expectedAmount
+    }
+
+    /// Everything the Recurring page shows for one selected month, generated
+    /// **strictly within that month**: the per-series expected occurrences, the
+    /// expected total, and how much of it is already covered by that month's
+    /// actual recurring transactions.
+    ///
+    /// - Parameters:
+    ///   - activeSeries: the active `RecurringPayment` records.
+    ///   - recurringTransactions: the **selected month's** `isRecurring`,
+    ///     non-excluded transactions (the caller filters by month; this method
+    ///     never looks outside it).
+    ///   - date: any date in the selected month.
+    func monthlyExpectation(
+        activeSeries: [RecurringPayment],
+        recurringTransactions: [Transaction],
+        inMonthContaining date: Date
+    ) -> RecurringMonthExpectation {
+        var occurrences: [RecurringMonthExpectation.Occurrence] = []
+
+        for series in activeSeries {
+            let dates = expectedOccurrenceDates(for: series, inMonthContaining: date)
+            guard !dates.isEmpty else { continue }
+
+            let seriesKey = Self.matchKey(accountName: series.accountName, merchantName: series.merchantName)
+            let actualCount = recurringTransactions.filter { transaction in
+                Self.matchKey(accountName: transaction.accountName, merchantName: transaction.merchantName) == seriesKey
+            }.count
+
+            for (index, occurrenceDate) in dates.enumerated() {
+                occurrences.append(
+                    RecurringMonthExpectation.Occurrence(
+                        seriesID: series.id,
+                        merchantName: series.merchantName,
+                        accountName: series.accountName,
+                        categoryName: series.category?.name,
+                        date: occurrenceDate,
+                        amount: series.expectedAmount,
+                        isMatched: index < actualCount
+                    )
+                )
+            }
+        }
+
+        occurrences.sort { $0.date < $1.date }
+
+        let expectedTotal = occurrences.reduce(Decimal.zero) { $0 + $1.amount }
+        let matchedTotal = occurrences.filter(\.isMatched).reduce(Decimal.zero) { $0 + $1.amount }
+        let completedCount = occurrences.filter(\.isMatched).count
+
+        return RecurringMonthExpectation(
+            occurrences: occurrences,
+            expectedTotal: expectedTotal,
+            matchedTotal: matchedTotal,
+            remainingTotal: expectedTotal - matchedTotal,
+            expectedCount: occurrences.count,
+            completedCount: completedCount
+        )
+    }
+
+    private static func matchKey(accountName: String, merchantName: String) -> String {
+        "\(accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(MerchantRuleNormalizer.normalizedMerchantKey(for: merchantName))"
+    }
+
+    private func occurrenceAnchor(for recurringPayment: RecurringPayment) -> Date {
+        if let latestTransaction = recurringPayment.transactions.map(\.transactionDate).max() {
+            return latestTransaction
+        }
+        return recurringPayment.nextExpectedDate ?? recurringPayment.createdAt
     }
 
     func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency, customIntervalDays: Int = 30) -> Date? {

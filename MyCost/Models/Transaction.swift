@@ -79,6 +79,25 @@ extension RecurrenceFrequency {
         }
     }
 
+    func previousDate(before date: Date, calendar: Calendar = Calendar(identifier: .gregorian), customIntervalDays: Int = 30) -> Date? {
+        switch self {
+        case .none:
+            nil
+        case .weekly:
+            calendar.date(byAdding: .day, value: -7, to: date)
+        case .biweekly:
+            calendar.date(byAdding: .day, value: -14, to: date)
+        case .monthly:
+            calendar.date(byAdding: .month, value: -1, to: date)
+        case .quarterly:
+            calendar.date(byAdding: .month, value: -3, to: date)
+        case .yearly:
+            calendar.date(byAdding: .year, value: -1, to: date)
+        case .custom:
+            calendar.date(byAdding: .day, value: -max(1, customIntervalDays), to: date)
+        }
+    }
+
     func monthlyMultiplier(customIntervalDays: Int = 30) -> Double {
         switch self {
         case .none:

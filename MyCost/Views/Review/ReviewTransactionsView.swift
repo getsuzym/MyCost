@@ -281,7 +281,12 @@ struct ReviewTransactionsView: View {
 
     private func seedAccountTypes() {
         for name in distinctAccountNames where accountTypeByName[name] == nil {
-            accountTypeByName[name] = accountService.resolveType(for: name, in: accounts)
+            if let known = accountService.account(named: name, in: accounts) {
+                accountTypeByName[name] = known.accountType
+            } else {
+                // The type the user confirmed in the import sheet, else "Other".
+                accountTypeByName[name] = ocrReviewStore.pendingDefaultAccountType ?? .other
+            }
         }
     }
 

@@ -41,28 +41,28 @@ struct RecurringPaymentsView: View {
         }
     }
 
-    private var expectedMonthlySpending: Decimal {
-        recurringPayments
-            .filter(\.isActive)
-            .reduce(Decimal.zero) { $0 + suggestionService.expectedMonthlyAmount(for: $1) }
+    /// The selected month is the single source of truth. Everything shown for
+    /// "this month" — expected occurrences, expected/actual/remaining totals,
+    /// occurrence counts — is generated strictly within `monthAnchor`'s calendar
+    /// month and regenerates whenever the month picker moves.
+    private var monthExpectation: RecurringMonthExpectation {
+        suggestionService.monthlyExpectation(
+            activeSeries: recurringPayments.filter(\.isActive),
+            recurringTransactions: monthRecurringTransactions.filter { !$0.isExcluded },
+            inMonthContaining: monthAnchor
+        )
     }
 
     var body: some View {
         let monthTx = monthRecurringTransactions
+        let expectation = monthExpectation
+        let monthName = Formatters.month.string(from: monthAnchor)
         return List {
-            Section {
-                RecurringMetricRow(
-                    title: "Expected Monthly",
-                    value: Formatters.currencyString(for: expectedMonthlySpending),
-                    systemImage: "calendar.badge.clock"
-                )
-            }
-
             Section {
                 HStack {
                     Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
                         .accessibilityIdentifier("recurringMonth.previous")
-                    Text(Formatters.month.string(from: monthAnchor))
+                    Text(monthName)
                         .font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                     Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
@@ -72,20 +72,51 @@ struct RecurringPaymentsView: View {
                 .buttonStyle(.borderless)
 
                 RecurringMetricRow(
-                    title: "Recurring This Month",
+                    title: "Expected This Month",
+                    value: Formatters.currencyString(for: expectation.expectedTotal),
+                    systemImage: "calendar.badge.clock"
+                )
+                .accessibilityIdentifier("recurringMonth.expected")
+                RecurringMetricRow(
+                    title: "Actual This Month",
                     value: Formatters.currencyString(for: recurringMonthTotal),
                     systemImage: "repeat"
                 )
                 .accessibilityIdentifier("recurringMonth.total")
                 RecurringMetricRow(
-                    title: "Recurring Transactions",
-                    value: "\(monthTx.count)",
+                    title: "Remaining This Month",
+                    value: Formatters.currencyString(for: expectation.remainingTotal),
+                    systemImage: "hourglass"
+                )
+                .accessibilityIdentifier("recurringMonth.remaining")
+                RecurringMetricRow(
+                    title: "Occurrences",
+                    value: "\(expectation.completedCount) of \(expectation.expectedCount)",
                     systemImage: "number"
                 )
-                .accessibilityIdentifier("recurringMonth.count")
+                .accessibilityIdentifier("recurringMonth.occurrences")
+            } header: {
+                Text("Recurring \u{2014} \(monthName)")
+            }
 
+            Section {
+                if expectation.occurrences.isEmpty {
+                    Text("No recurring payments scheduled in \(monthName).")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(expectation.occurrences) { occurrence in
+                    ExpectedOccurrenceRow(occurrence: occurrence)
+                        .accessibilityIdentifier("recurringMonth.expectedRow")
+                }
+            } header: {
+                Text("Expected This Month")
+            } footer: {
+                Text("Only occurrences dated within \(monthName). A biweekly series lands twice or three times depending on the month.")
+            }
+
+            Section {
                 if monthTx.isEmpty {
-                    Text("No recurring transactions in \(Formatters.month.string(from: monthAnchor)).")
+                    Text("No recurring transactions in \(monthName).")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(monthTx) { transaction in
@@ -97,7 +128,7 @@ struct RecurringPaymentsView: View {
                     .accessibilityIdentifier("recurringMonth.row")
                 }
             } header: {
-                Text("Recurring This Month")
+                Text("Recurring Transactions \u{2014} \(monthName)")
             }
 
             Section("Recurring Payments") {
@@ -189,6 +220,37 @@ struct RecurringPaymentsView: View {
     private func stepMonth(_ delta: Int) {
         guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
         monthAnchor = moved > Date() ? Date() : moved
+    }
+}
+
+private struct ExpectedOccurrenceRow: View {
+    let occurrence: RecurringMonthExpectation.Occurrence
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: occurrence.isMatched ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(occurrence.isMatched ? Color.green : Color.secondary)
+                .accessibilityLabel(occurrence.isMatched ? "Received" : "Expected")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(occurrence.merchantName).font(.body).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(Formatters.shortDate.string(from: occurrence.date))
+                    if let categoryName = occurrence.categoryName {
+                        Text("·")
+                        Text(categoryName)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(Formatters.currencyString(for: occurrence.amount))
+                .font(.body.monospacedDigit())
+                .foregroundStyle(occurrence.isMatched ? .secondary : .primary)
+        }
     }
 }
 

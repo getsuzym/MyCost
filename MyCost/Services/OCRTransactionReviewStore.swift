@@ -206,6 +206,11 @@ final class OCRTransactionReviewStore: ObservableObject {
     /// Metadata about the batch import that produced `drafts`.
     @Published private(set) var batchInfo = OCRBatchSessionInfo()
 
+    /// The account type the user confirmed in the import sheet. Review seeds it
+    /// as the type for any account in this session the app hasn't seen before
+    /// (a known `Account`'s remembered type still wins). Cleared with the session.
+    @Published var pendingDefaultAccountType: AccountType?
+
     /// A review session is "active" whenever there are drafts still on the
     /// bench. Drives the review banner / shortcut and the "import already in
     /// progress" prompt.
@@ -365,5 +370,6 @@ final class OCRTransactionReviewStore: ObservableObject {
         drafts = []
         sourceThumbnails = [:]
         batchInfo = OCRBatchSessionInfo()
+        pendingDefaultAccountType = nil
     }
 }

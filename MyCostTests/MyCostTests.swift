@@ -677,6 +677,205 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(service.suggestions(from: transactions).isEmpty)
     }
 
+    func testBiweeklySeriesCountsEveryOccurrenceThatLandsInTheMonth() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = RecurringPayment(
+            merchantName: "Mortgage",
+            expectedAmount: Decimal(string: "877.67")!,
+            frequency: .biweekly,
+            nextExpectedDate: date(2026, 8, 21)
+        )
+
+        // August 2026: charges land Aug 7 and Aug 21 -> 2 occurrences.
+        XCTAssertEqual(service.occurrenceCount(for: mortgage, inMonthContaining: date(2026, 8, 15)), 2)
+        XCTAssertEqual(
+            service.expectedAmount(for: mortgage, inMonthContaining: date(2026, 8, 15)),
+            Decimal(string: "1755.34")!
+        )
+
+        // October 2026: charges land Oct 2, 16, 30 -> 3 occurrences.
+        XCTAssertEqual(service.occurrenceCount(for: mortgage, inMonthContaining: date(2026, 10, 1)), 3)
+        XCTAssertEqual(
+            service.expectedAmount(for: mortgage, inMonthContaining: date(2026, 10, 1)),
+            Decimal(string: "2633.01")!
+        )
+    }
+
+    func testMonthlySeriesCountsOncePerMonthAndYearlySeriesOnlyInItsMonth() {
+        let service = RecurringPaymentSuggestionService()
+        let subscription = RecurringPayment(
+            merchantName: "Cloud Storage",
+            expectedAmount: 12,
+            frequency: .monthly,
+            nextExpectedDate: date(2026, 8, 15)
+        )
+        XCTAssertEqual(service.occurrenceCount(for: subscription, inMonthContaining: date(2026, 8, 2)), 1)
+        XCTAssertEqual(service.occurrenceCount(for: subscription, inMonthContaining: date(2026, 11, 20)), 1)
+
+        let insurance = RecurringPayment(
+            merchantName: "Insurance",
+            expectedAmount: 600,
+            frequency: .yearly,
+            nextExpectedDate: date(2026, 3, 10)
+        )
+        XCTAssertEqual(service.occurrenceCount(for: insurance, inMonthContaining: date(2026, 3, 1)), 1)
+        XCTAssertEqual(service.occurrenceCount(for: insurance, inMonthContaining: date(2026, 8, 1)), 0)
+        XCTAssertEqual(service.expectedAmount(for: insurance, inMonthContaining: date(2026, 8, 1)), 0)
+    }
+
+    // MARK: - Recurring page: selected month is the source of truth
+
+    private func biweeklyMortgage(amount: Decimal = Decimal(string: "877.67")!) -> RecurringPayment {
+        RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Mortgage",
+            expectedAmount: amount,
+            frequency: .biweekly,
+            nextExpectedDate: date(2026, 8, 21)
+        )
+    }
+
+    private func mortgagePayment(on day: Int, month: Int) -> Transaction {
+        Transaction(
+            accountName: "Chequing",
+            merchantName: "Mortgage",
+            amount: Decimal(string: "877.67")!,
+            transactionDate: date(2026, month, day),
+            isRecurring: true
+        )
+    }
+
+    func testSelectingSeptemberNeverShowsAugustOrOctoberExpectedOccurrences() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage()
+
+        let september = service.expectedOccurrenceDates(for: mortgage, inMonthContaining: date(2026, 9, 15))
+        XCTAssertEqual(september, [date(2026, 9, 4), date(2026, 9, 18)])
+
+        let gregorian = Calendar(identifier: .gregorian)
+        XCTAssertTrue(september.allSatisfy { gregorian.component(.month, from: $0) == 9 })
+        XCTAssertFalse(september.contains(date(2026, 8, 21)))
+        XCTAssertFalse(september.contains(date(2026, 10, 2)))
+
+        let expectation = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [],
+            inMonthContaining: date(2026, 9, 15)
+        )
+        XCTAssertEqual(expectation.occurrences.map(\.date), [date(2026, 9, 4), date(2026, 9, 18)])
+        XCTAssertEqual(expectation.expectedTotal, Decimal(string: "1755.34")!)
+    }
+
+    func testExpectedTotalsIncludeOnlySelectedMonthOccurrences() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage()
+        let netflix = RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Netflix",
+            expectedAmount: 20,
+            frequency: .monthly,
+            nextExpectedDate: date(2026, 8, 3)
+        )
+        let insurance = RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Insurance",
+            expectedAmount: 600,
+            frequency: .yearly,
+            nextExpectedDate: date(2026, 3, 10)
+        )
+
+        let september = service.monthlyExpectation(
+            activeSeries: [mortgage, netflix, insurance],
+            recurringTransactions: [],
+            inMonthContaining: date(2026, 9, 15)
+        )
+
+        // 2 mortgage + 1 Netflix; the yearly insurance is not due in September.
+        XCTAssertEqual(september.expectedCount, 3)
+        XCTAssertEqual(september.expectedTotal, Decimal(string: "1775.34")!)
+        XCTAssertFalse(september.occurrences.contains { $0.merchantName == "Insurance" })
+
+        // The yearly series only appears in its own month, at full amount.
+        let march = service.monthlyExpectation(
+            activeSeries: [insurance],
+            recurringTransactions: [],
+            inMonthContaining: date(2026, 3, 1)
+        )
+        XCTAssertEqual(march.expectedCount, 1)
+        XCTAssertEqual(march.expectedTotal, 600)
+    }
+
+    func testBiweeklySeriesProducesDifferentOccurrenceCountsInDifferentMonths() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage()
+
+        XCTAssertEqual(
+            service.expectedOccurrenceDates(for: mortgage, inMonthContaining: date(2026, 9, 1)),
+            [date(2026, 9, 4), date(2026, 9, 18)]
+        )
+        XCTAssertEqual(
+            service.expectedOccurrenceDates(for: mortgage, inMonthContaining: date(2026, 10, 1)),
+            [date(2026, 10, 2), date(2026, 10, 16), date(2026, 10, 30)]
+        )
+    }
+
+    func testActualTransactionsMatchOnlyExpectedOccurrencesInTheSameSelectedMonth() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage()
+
+        // Caller passes only September's recurring transactions.
+        let expectation = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [mortgagePayment(on: 4, month: 9)],
+            inMonthContaining: date(2026, 9, 15)
+        )
+
+        XCTAssertEqual(expectation.expectedCount, 2)
+        XCTAssertEqual(expectation.completedCount, 1)
+        XCTAssertEqual(expectation.remainingCount, 1)
+        XCTAssertEqual(expectation.matchedTotal, Decimal(string: "877.67")!)
+        XCTAssertEqual(expectation.remainingTotal, Decimal(string: "877.67")!)
+        XCTAssertEqual(expectation.occurrences.filter(\.isMatched).count, 1)
+
+        // An August payment does not count toward September's completed count.
+        let septemberOnly = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [],
+            inMonthContaining: date(2026, 9, 15)
+        )
+        XCTAssertEqual(septemberOnly.completedCount, 0)
+        XCTAssertEqual(septemberOnly.remainingTotal, Decimal(string: "1755.34")!)
+    }
+
+    func testSwitchingMonthsUpdatesExpectedActualAndRemainingConsistently() {
+        let service = RecurringPaymentSuggestionService()
+        let mortgage = biweeklyMortgage(amount: 100)
+
+        let september = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [mortgagePayment(on: 4, month: 9)],
+            inMonthContaining: date(2026, 9, 10)
+        )
+        XCTAssertEqual(september.expectedCount, 2)
+        XCTAssertEqual(september.expectedTotal, 200)
+        XCTAssertEqual(september.completedCount, 1)
+        XCTAssertEqual(september.remainingTotal, 100)
+
+        let october = service.monthlyExpectation(
+            activeSeries: [mortgage],
+            recurringTransactions: [mortgagePayment(on: 2, month: 10), mortgagePayment(on: 16, month: 10)],
+            inMonthContaining: date(2026, 10, 10)
+        )
+        XCTAssertEqual(october.expectedCount, 3)
+        XCTAssertEqual(october.expectedTotal, 300)
+        XCTAssertEqual(october.completedCount, 2)
+        XCTAssertEqual(october.remainingTotal, 100)
+
+        // No September occurrence bleeds into October's list.
+        let gregorian = Calendar(identifier: .gregorian)
+        XCTAssertTrue(october.occurrences.allSatisfy { gregorian.component(.month, from: $0.date) == 10 })
+    }
+
     func testSpendingSummaryDistinguishesRecurringAndNonRecurringSpending() {
         let recurringPayment = RecurringPayment(
             merchantName: "Cloud Storage",
@@ -2389,6 +2588,41 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(accounts.count, 1)
         XCTAssertEqual(AccountService().resolveType(for: "My Visa", in: accounts), .debit)
         XCTAssertEqual(AccountService().resolveType(for: "Unknown", in: accounts), .other)
+    }
+
+    func testGuessAccountTypeReadsTheDominantSignOfDetectedAmounts() {
+        // Mostly positive -> credit-card statement (purchases +, one payment -).
+        XCTAssertEqual(
+            AccountService.guessAccountType(fromAmounts: [12.40, 3.99, 88.10, 5.25, -220.00]),
+            AccountTypeSuggestion(type: .creditCard, isConfident: true)
+        )
+        // Mostly negative -> chequing/debit statement (purchases -, one deposit +).
+        XCTAssertEqual(
+            AccountService.guessAccountType(fromAmounts: [-12.40, -3.99, -88.10, -5.25, 1500.00]),
+            AccountTypeSuggestion(type: .debit, isConfident: true)
+        )
+        // No clear majority -> Other, and not confident.
+        XCTAssertEqual(
+            AccountService.guessAccountType(fromAmounts: [10, -10, 20, -20]),
+            AccountTypeSuggestion(type: .other, isConfident: false)
+        )
+        // Too few samples to assert a direction.
+        XCTAssertEqual(
+            AccountService.guessAccountType(fromAmounts: [42]),
+            AccountTypeSuggestion(type: .other, isConfident: false)
+        )
+        // A direction but a thin sample -> right type, low confidence.
+        XCTAssertEqual(
+            AccountService.guessAccountType(fromAmounts: [10, 20]),
+            AccountTypeSuggestion(type: .creditCard, isConfident: false)
+        )
+    }
+
+    func testReviewSessionDefaultAccountTypeClearsWhenTheSessionClears() {
+        let store = OCRTransactionReviewStore()
+        store.pendingDefaultAccountType = .creditCard
+        store.clear()
+        XCTAssertNil(store.pendingDefaultAccountType)
     }
 
     func testCreditCardBatchImportNormalizesPurchasesRefundsAndPayments() throws {
