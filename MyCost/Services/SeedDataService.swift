@@ -2,24 +2,32 @@ import Foundation
 import SwiftData
 
 enum SeedDataService {
-    /// One-time reset of `Transaction.spendingCountOverridden`, which an earlier
-    /// build set on **every** edit (not just when the user toggled "Counts as
-    /// spending"). Clearing it lets the recurring re-check in
-    /// `Transaction.contributesToSpending` govern again; a genuine later toggle
-    /// re-sets it.
+    /// One-time: every transaction counts toward spending unless the user
+    /// removes it by hand. Earlier builds let the account-type normalizer
+    /// auto-exclude card payments / deposits / ambiguous rows; this clears all
+    /// of those (`countsAsSpending` back to `true`, hand-override flag reset,
+    /// `normalizedAmount` re-derived) so the user starts from "all counted".
     @MainActor
-    static func resetStaleSpendingOverridesIfNeeded(modelContext: ModelContext) {
-        let key = "mycost.migration.clearSpendingOverride.v1"
+    static func countAllTransactionsByDefaultIfNeeded(modelContext: ModelContext) {
+        let key = "mycost.migration.countAllByDefault.v1"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         defer { UserDefaults.standard.set(true, forKey: key) }
 
         let transactions = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? []
-        var changed = false
-        for transaction in transactions where transaction.spendingCountOverridden {
+        guard !transactions.isEmpty else { return }
+
+        let normalizer = TransactionNormalizer()
+        for transaction in transactions {
+            let normalized = normalizer.normalize(
+                originalAmount: transaction.amount,
+                accountType: transaction.accountType,
+                description: transaction.originalDescription.isEmpty ? transaction.merchantName : transaction.originalDescription
+            )
+            transaction.applyNormalization(normalized, accountType: transaction.accountType)
+            transaction.countsAsSpending = true
             transaction.spendingCountOverridden = false
-            changed = true
         }
-        if changed { modelContext.saveOrLog("migration clearSpendingOverride.v1") }
+        modelContext.saveOrLog("migration countAllByDefault.v1")
     }
 
     @MainActor

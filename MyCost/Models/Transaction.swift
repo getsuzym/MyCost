@@ -265,44 +265,20 @@ final class Transaction {
         set { accountTypeRawValue = newValue.rawValue }
     }
 
-    /// The normalizer verdict re-evaluated against the **current** rules, so
-    /// narrowing a keyword list retroactively fixes already-imported rows
-    /// without a migration.
-    private var currentNormalization: NormalizedTransaction {
-        TransactionNormalizer().normalize(
-            originalAmount: amount,
-            accountType: accountType,
-            description: originalDescription.isEmpty ? merchantName : originalDescription
-        )
-    }
-
-    /// Whether this row is part of spending totals at all. The normalizer's
-    /// count wins; otherwise a **recurring** row is rescued when the current
-    /// rules would count it, when it's a recurring credit/refund, or when the
-    /// current rules find its sign ambiguous (`needsReview`). A hand override
-    /// (`spendingCountOverridden`) and a confidently-detected deposit / card
-    /// payoff are never rescued.
+    /// Whether this row is part of spending totals. **Every transaction counts
+    /// by default** — `countsAsSpending` is only ever `false` because the user
+    /// turned it off in the editor (which also sets `spendingCountOverridden`).
     var contributesToSpending: Bool {
-        if countsAsSpending { return true }
-        if spendingCountOverridden { return false }
-        guard isRecurring else { return false }
-        let n = currentNormalization
-        return n.countsAsSpending || n.normalizedAmount < 0 || n.needsReview
+        countsAsSpending
     }
 
-    /// The value analytics should sum. Zero when the row doesn't contribute
-    /// (card payoffs, deposits). Legacy rows (`.unknown` direction) fall back to
-    /// `amount`. A rescued recurring row is summed at the current normalizer's
-    /// value, else its bank magnitude.
+    /// The value analytics sum. `0` only when the user un-counted the row.
+    /// A normalized row uses `normalizedAmount` (positive purchase / negative
+    /// refund); a row that never went through the normalizer (`.unknown`
+    /// direction — test fixtures, legacy data) uses the bank amount as-is.
     var spendingAmount: Decimal {
-        guard contributesToSpending else { return 0 }
-        if countsAsSpending {
-            return transactionDirection == .unknown ? amount : normalizedAmount
-        }
-        let n = currentNormalization
-        if n.normalizedAmount < 0 { return n.normalizedAmount } // a recurring credit/refund
-        if n.countsAsSpending { return n.normalizedAmount }
-        return abs(amount)
+        guard countsAsSpending else { return 0 }
+        return transactionDirection == .unknown ? amount : normalizedAmount
     }
 
     /// Applies a `TransactionNormalizer` result to the stored fields.

@@ -2706,10 +2706,13 @@ final class MyCostTests: XCTestCase {
         XCTAssertFalse(n.needsReview)
     }
 
-    func testCreditCardPaymentIsNotSpending() {
+    func testCreditCardPaymentCountsByDefaultButIsFlagged() {
+        // Everything counts by default now; a negative on a card is just
+        // flagged so the user can un-count it if it's a bill payment.
         let n = normalizer.normalize(originalAmount: -1000, accountType: .creditCard, description: "PAYMENT - THANK YOU")
-        XCTAssertEqual(n.normalizedAmount, 0)
-        XCTAssertFalse(n.countsAsSpending)
+        XCTAssertEqual(n.normalizedAmount, 1000)
+        XCTAssertTrue(n.countsAsSpending)
+        XCTAssertTrue(n.needsReview)
         XCTAssertEqual(n.direction, .credit)
     }
 
@@ -2727,22 +2730,24 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(n.direction, .debit)
     }
 
-    func testDebitPositiveDepositIsIncomeNotSpending() {
+    func testDebitPositiveDepositCountsByDefaultButIsFlagged() {
         let n = normalizer.normalize(originalAmount: 2000, accountType: .debit, description: "PAYROLL DIRECT DEPOSIT")
-        XCTAssertEqual(n.normalizedAmount, 0)
-        XCTAssertFalse(n.countsAsSpending)
+        XCTAssertEqual(n.normalizedAmount, 2000)
+        XCTAssertTrue(n.countsAsSpending)
+        XCTAssertTrue(n.needsReview)
         XCTAssertEqual(n.direction, .credit)
-        XCTAssertFalse(n.needsReview)
     }
 
-    func testAmbiguousDirectionIsFlaggedForReview() {
-        // Negative on a credit card with no payment/refund cue — unclear.
+    func testUnconventionalSignIsFlaggedForReviewButStillCounts() {
+        // Negative on a credit card — likely a payment; flagged, still counts.
         let cc = normalizer.normalize(originalAmount: -60, accountType: .creditCard, description: "MISC ADJUSTMENT 55")
         XCTAssertTrue(cc.needsReview)
-        XCTAssertFalse(cc.countsAsSpending)
-        // Positive on a debit account with no income/refund cue — unclear.
+        XCTAssertTrue(cc.countsAsSpending)
+        XCTAssertEqual(cc.normalizedAmount, 60)
+        // Positive on a debit account — likely a deposit; flagged, still counts.
         let debit = normalizer.normalize(originalAmount: 60, accountType: .debit, description: "UNKNOWN 771")
         XCTAssertTrue(debit.needsReview)
+        XCTAssertTrue(debit.countsAsSpending)
     }
 
     func testNeverBlindlyFlipsAmountWhenSignMatchesConvention() {
@@ -3044,17 +3049,19 @@ final class MyCostTests: XCTestCase {
 
         let history = try historyTransactions()
         let payment = try XCTUnwrap(history.first { $0.merchantName == "PAYMENT THANK YOU" })
-        XCTAssertFalse(payment.countsAsSpending)
-        XCTAssertEqual(payment.spendingAmount, 0)
+        // Everything counts by default — the payment is flagged, not excluded.
+        XCTAssertTrue(payment.countsAsSpending)
+        XCTAssertTrue(payment.needsDirectionReview)
+        XCTAssertEqual(payment.spendingAmount, 1000)
 
-        // 45 (purchase) - 35 (refund) + 0 (payment excluded)
+        // 45 (purchase) + 1000 (payment) - 35 (refund)
         let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
-        XCTAssertEqual(summary.total, 10)
+        XCTAssertEqual(summary.total, 1010)
         XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Groceries" }?.amount, 45)
-        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Uncategorized" }?.amount, -35)
+        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Uncategorized" }?.amount, 965) // 1000 - 35
     }
 
-    func testDebitBatchImportTreatsNegativesAsSpendingAndPositivesAsIncome() throws {
+    func testDebitBatchImportCountsEverythingWithDepositsFlagged() throws {
         let drafts = [
             draft(merchant: "GROCERY RUN", amount: -60, on: date(2026, 8, 4)),
             draft(merchant: "PAYROLL DEPOSIT", amount: 2200, on: date(2026, 8, 1))
@@ -3066,148 +3073,78 @@ final class MyCostTests: XCTestCase {
         XCTAssertNil(outcome.saveError)
 
         let history = try historyTransactions()
-        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history).total, 60)
-        XCTAssertFalse(try XCTUnwrap(history.first { $0.merchantName == "PAYROLL DEPOSIT" }).countsAsSpending)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history).total, 2260)
+        let deposit = try XCTUnwrap(history.first { $0.merchantName == "PAYROLL DEPOSIT" })
+        XCTAssertTrue(deposit.countsAsSpending)
+        XCTAssertTrue(deposit.needsDirectionReview) // flagged so the user can un-count it
     }
 
-    // MARK: - Recurring totals honor the user's mark over a fuzzy sign guess
+    // MARK: - Everything counts unless the user removes it
 
-    func testGenericBillAndPreAuthPaymentsAreSpendingNotBalancePayoffs() {
+    func testEveryImportedTransactionCountsRegardlessOfDescriptionOrSign() {
         let n = TransactionNormalizer()
-        for desc in ["Bill Payment BELL MOBILITY", "PRE-AUTHORIZED PAYMENT MORTGAGE", "AUTOPAY GYM", "e-Transfer sent linlin"] {
-            XCTAssertTrue(n.normalize(originalAmount: -51.52, accountType: .debit, description: desc).countsAsSpending,
-                          "\(desc) on debit should count as spending")
-            XCTAssertTrue(n.normalize(originalAmount: -51.52, accountType: .other, description: desc).countsAsSpending,
-                          "\(desc) on 'other' should count as spending")
+        let descriptions = [
+            "Bill Payment BELL MOBILITY", "PRE-AUTHORIZED PAYMENT MORTGAGE",
+            "PAYMENT - THANK YOU", "CREDIT CARD PAYMENT", "PAYROLL DIRECT DEPOSIT",
+            "e-Transfer sent linlin", "CORNER MARKET"
+        ]
+        for desc in descriptions {
+            for (amount, type) in [(Decimal(-51.52), AccountType.debit), (Decimal(-1200), .creditCard), (Decimal(2000), .other)] {
+                XCTAssertTrue(n.normalize(originalAmount: amount, accountType: type, description: desc).countsAsSpending,
+                              "\(desc) @ \(amount) / \(type) should count")
+            }
         }
     }
 
-    func testCreditCardBalancePayoffStillDoesNotCount() {
+    func testRefundsStillReduceTheTotal() {
         let n = TransactionNormalizer()
-        for desc in ["PAYMENT - THANK YOU", "Thank you for your payment", "CREDIT CARD PAYMENT"] {
-            XCTAssertFalse(n.normalize(originalAmount: -1200, accountType: .creditCard, description: desc).countsAsSpending,
-                           "\(desc) is a card payoff, not spending")
+        for desc in ["AMAZON.COM REFUND", "PRICE ADJUSTMENT", "STORE RETURN"] {
+            let r = n.normalize(originalAmount: -40, accountType: .creditCard, description: desc)
+            XCTAssertEqual(r.normalizedAmount, -40)
+            XCTAssertTrue(r.countsAsSpending)
         }
     }
 
-    func testUserMarkedRecurringCountsEvenWhenTheSignNormalizerZeroedIt() throws {
-        let housing = makeCategory("Housing", sortOrder: 0)
-        // Imported from a screenshot where +877.67 landed on a chequing account
-        // with no minus → the normalizer reads it as a deposit → not spending.
-        let normalized = TransactionNormalizer().normalize(originalAmount: 877.67, accountType: .debit, description: "Mortgage payment")
-        XCTAssertFalse(normalized.countsAsSpending)
-        XCTAssertTrue(normalized.needsReview)
-
-        let mortgage = Transaction(
-            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
-            amount: 877.67, transactionDate: date(2026, 8, 7), category: housing
-        )
-        mortgage.applyNormalization(normalized, accountType: .debit)
-        context.insert(mortgage)
-        XCTAssertFalse(mortgage.contributesToSpending)
-        XCTAssertEqual(mortgage.spendingAmount, 0)
-
-        mortgage.isRecurring = true
-        try context.save()
-
-        XCTAssertTrue(mortgage.contributesToSpending)
-        XCTAssertEqual(mortgage.spendingAmount, abs(mortgage.amount))
-        let summary = try summaryFor(date(2026, 8, 15))
-        XCTAssertEqual(summary.recurringTotal, abs(mortgage.amount))
-        XCTAssertEqual(summary.total, abs(mortgage.amount))
-    }
-
-    func testRecurringTotalMatchesTheSumOfEveryRecurringRow() throws {
-        let subs = makeCategory("Subscriptions", sortOrder: 0)
-        let housing = makeCategory("Housing", sortOrder: 1)
-
-        let clean = insertTransaction("Mortgage payment", amount: 877.67, on: date(2026, 8, 21), category: housing)
-        clean.isRecurring = true
-
-        let zeroed = Transaction(
-            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
-            amount: 877.67, transactionDate: date(2026, 8, 7), category: housing
-        )
-        zeroed.applyNormalization(
-            TransactionNormalizer().normalize(originalAmount: 877.67, accountType: .debit, description: "Mortgage payment"),
-            accountType: .debit
-        )
-        zeroed.isRecurring = true
-        context.insert(zeroed)
-
-        let yt = insertTransaction("GOOGLE*YOUTUBEPREMIUM", amount: 25.75, on: date(2026, 8, 29), category: subs)
-        yt.isRecurring = true
-        try context.save()
-
-        let rows = try allTransactions().filter { $0.isRecurring && !$0.isExcluded }
-        let visibleSum = rows.reduce(Decimal.zero) { $0 + abs($1.amount) }
-        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, visibleSum)
-    }
-
-    func testRecurringRowConfidentlyZeroedByOldRulesStillCountsAfterReCheck() throws {
-        let housing = makeCategory("Housing", sortOrder: 0)
-        // Frozen at import as a *confident* non-spending row (old broad
-        // "pre-authorized payment" keyword): countsAsSpending=false,
-        // needsDirectionReview=false, direction=.credit.
-        let mortgage = Transaction(
-            merchantName: "Mortgage payment",
-            originalDescription: "PC MORTGAGE PRE-AUTHORIZED PAYMENT",
+    func testCountAllByDefaultMigrationClearsAutoExcludedRows() throws {
+        UserDefaults.standard.removeObject(forKey: "mycost.migration.countAllByDefault.v1")
+        // A row an earlier build froze as non-spending (card payoff).
+        let payoff = Transaction(
+            merchantName: "Mortgage payment", originalDescription: "PC MORTGAGE PRE-AUTHORIZED PAYMENT",
             amount: -877.67, transactionDate: date(2026, 8, 21),
-            transactionDirection: .credit, accountType: .creditCard,
-            countsAsSpending: false, needsDirectionReview: false,
-            category: housing
-        )
-        mortgage.isRecurring = true
-        context.insert(mortgage)
-        try context.save()
-
-        // Re-checking the current (narrow) rules: no keyword → a negative on a
-        // card with no cue is now `needsReview` → the recurring mark rescues it.
-        XCTAssertTrue(mortgage.contributesToSpending)
-        XCTAssertEqual(mortgage.spendingAmount, abs(mortgage.amount))
-        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, abs(mortgage.amount))
-    }
-
-    func testResetStaleSpendingOverridesClearsTheFlagOnce() throws {
-        UserDefaults.standard.removeObject(forKey: "mycost.migration.clearSpendingOverride.v1")
-        let mortgage = Transaction(
-            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
-            amount: -877.67, transactionDate: date(2026, 8, 7),
+            normalizedAmount: 0, transactionDirection: .credit, accountType: .creditCard,
             countsAsSpending: false, spendingCountOverridden: true
         )
-        mortgage.isRecurring = true
-        context.insert(mortgage)
+        context.insert(payoff)
         try context.save()
-        XCTAssertFalse(mortgage.contributesToSpending) // blocked by the stale override
+        XCTAssertFalse(payoff.contributesToSpending)
 
-        SeedDataService.resetStaleSpendingOverridesIfNeeded(modelContext: context)
-        XCTAssertFalse(mortgage.spendingCountOverridden)
-        XCTAssertTrue(mortgage.contributesToSpending) // recurring re-check governs again
+        SeedDataService.countAllTransactionsByDefaultIfNeeded(modelContext: context)
 
-        // A genuine later override survives a second run.
-        mortgage.spendingCountOverridden = true
-        SeedDataService.resetStaleSpendingOverridesIfNeeded(modelContext: context)
-        XCTAssertTrue(mortgage.spendingCountOverridden)
+        XCTAssertTrue(payoff.countsAsSpending)
+        XCTAssertFalse(payoff.spendingCountOverridden)
+        XCTAssertEqual(payoff.spendingAmount, abs(payoff.amount))
+
+        // Runs once — a later user un-count survives a second pass.
+        payoff.countsAsSpending = false
+        payoff.spendingCountOverridden = true
+        SeedDataService.countAllTransactionsByDefaultIfNeeded(modelContext: context)
+        XCTAssertFalse(payoff.countsAsSpending)
     }
 
-    func testConfidentIncomeMarkedRecurringIsNotRescued() throws {
+    func testUserCanStillRemoveATransactionFromSpending() throws {
         let cat = makeCategory("Income", sortOrder: 0)
-        let payroll = Transaction(
-            merchantName: "PAYROLL DIRECT DEPOSIT", originalDescription: "PAYROLL DIRECT DEPOSIT",
-            amount: 2000, transactionDate: date(2026, 8, 15), category: cat
-        )
-        payroll.applyNormalization(
-            TransactionNormalizer().normalize(originalAmount: 2000, accountType: .debit, description: "PAYROLL DIRECT DEPOSIT"),
-            accountType: .debit
-        )
-        payroll.isRecurring = true // user (wrongly) marks a deposit recurring
-        context.insert(payroll)
+        let payroll = insertTransaction("PAYROLL DEPOSIT", amount: 2000, on: date(2026, 8, 15), category: cat)
+        try context.save()
+        XCTAssertEqual(payroll.spendingAmount, 2000) // counts by default
+
+        // The user's "Counts as spending" toggle wins.
+        payroll.countsAsSpending = false
+        payroll.spendingCountOverridden = true
         try context.save()
 
-        XCTAssertFalse(payroll.needsDirectionReview) // the normalizer was confident
         XCTAssertFalse(payroll.contributesToSpending)
         XCTAssertEqual(payroll.spendingAmount, 0)
-        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, 0)
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).total, 0)
     }
 
     // MARK: - Category drill-down

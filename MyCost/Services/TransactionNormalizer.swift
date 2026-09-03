@@ -21,23 +21,24 @@ enum TransactionDirection: String, Codable, CaseIterable, Identifiable {
 
 /// The account-type-aware interpretation of one bank amount.
 struct NormalizedTransaction: Equatable {
-    /// Consistent spending value used by analytics: positive = spending,
-    /// negative = a refund/credit that *reduces* spending, zero = not spending.
-    /// Only meaningful when `countsAsSpending` is true.
+    /// Spending value used by analytics: positive = spending, negative = a
+    /// refund/credit that *reduces* spending, zero = a zero-amount row.
     var normalizedAmount: Decimal
     var direction: TransactionDirection
-    /// Whether this transaction should be included in spending totals at all.
-    /// Payments, transfers, deposits, and payroll are `false`.
+    /// **Always `true`.** Every transaction counts toward spending by default;
+    /// only the user removes one, via the editor's "Counts as spending" toggle.
+    /// Kept on the struct so callers don't change shape.
     var countsAsSpending: Bool
-    /// The sign/description combination was unusual for the account type — the
-    /// UI should ask the user to confirm.
+    /// The sign/description combination looks like a payment, transfer or
+    /// deposit — the editor shows a soft hint so the user can un-count it if
+    /// they want. It does **not** exclude the transaction on its own.
     var needsReview: Bool
 }
 
 /// Turns a bank-displayed signed amount into a consistent spending value using
-/// the account type plus keyword cues in the description. Never blindly flips
-/// every amount — an amount whose sign already matches the expected convention
-/// for its account type is taken at face value.
+/// the account type plus a refund cue. Purchases become positive regardless of
+/// the bank's sign convention; refunds become negative. Nothing is excluded
+/// automatically — `countsAsSpending` is always `true`.
 struct TransactionNormalizer {
     func normalize(
         originalAmount: Decimal,
@@ -45,106 +46,53 @@ struct TransactionNormalizer {
         description: String
     ) -> NormalizedTransaction {
         let text = description.lowercased()
-        let paymentLike = Self.matches(text, Self.paymentKeywords)
         let refundLike = Self.matches(text, Self.refundKeywords)
-        let incomeLike = Self.matches(text, Self.incomeKeywords)
-        let isPositive = originalAmount > 0
-        let isNegative = originalAmount < 0
         let magnitude = abs(originalAmount)
 
+        if originalAmount == 0 {
+            return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: true, needsReview: false)
+        }
+
+        // A refund/credit reduces spending — the one automatic sign flip.
+        if refundLike {
+            return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false)
+        }
+
+        // Everything else is spending at its magnitude. `direction` /
+        // `needsReview` are informational hints for the editor — a sign that
+        // doesn't match the account's convention (negative on a card, positive
+        // on a chequing account) usually means a payment or deposit the user
+        // may want to un-count. They never zero the row.
         switch accountType {
         case .creditCard:
-            if originalAmount == 0 {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: false, needsReview: false)
-            }
-            if isPositive {
-                // Purchases are shown positive on a credit card.
-                // A positive amount that reads like a refund is contradictory.
-                return NormalizedTransaction(
-                    normalizedAmount: magnitude,
-                    direction: .debit,
-                    countsAsSpending: true,
-                    needsReview: refundLike || paymentLike
-                )
-            }
-            // Negative on a credit card: a payment, a refund/credit, or unclear.
-            if paymentLike {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: false)
-            }
-            if refundLike {
-                // A refund reduces spending.
-                return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false)
-            }
-            return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: true)
-
+            return NormalizedTransaction(
+                normalizedAmount: magnitude,
+                direction: originalAmount > 0 ? .debit : .credit,
+                countsAsSpending: true,
+                needsReview: originalAmount < 0
+            )
         case .debit:
-            if originalAmount == 0 {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: false, needsReview: false)
-            }
-            if isNegative {
-                // Purchases/withdrawals are shown negative on a chequing account.
-                return NormalizedTransaction(
-                    normalizedAmount: magnitude,
-                    direction: .debit,
-                    countsAsSpending: true,
-                    needsReview: incomeLike
-                )
-            }
-            // Positive on debit: a deposit / payroll (income), a refund, or unclear.
-            if incomeLike {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: false)
-            }
-            if refundLike {
-                return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false)
-            }
-            return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: true)
-
+            return NormalizedTransaction(
+                normalizedAmount: magnitude,
+                direction: originalAmount < 0 ? .debit : .credit,
+                countsAsSpending: true,
+                needsReview: originalAmount > 0
+            )
         case .other:
-            if originalAmount == 0 {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: false, needsReview: false)
-            }
-            if paymentLike {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: isPositive)
-            }
-            if incomeLike {
-                return NormalizedTransaction(normalizedAmount: 0, direction: .credit, countsAsSpending: false, needsReview: isNegative)
-            }
-            if refundLike {
-                return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false)
-            }
-            if isNegative {
-                // Best guess: negative = spending, but the convention is unknown.
-                return NormalizedTransaction(normalizedAmount: magnitude, direction: .debit, countsAsSpending: true, needsReview: false)
-            }
-            // Positive with no cues on an unknown account type — ambiguous.
-            return NormalizedTransaction(normalizedAmount: magnitude, direction: .debit, countsAsSpending: true, needsReview: true)
+            return NormalizedTransaction(
+                normalizedAmount: magnitude,
+                direction: .debit,
+                countsAsSpending: true,
+                needsReview: false
+            )
         }
     }
 
     // MARK: Keyword cues
 
-    /// Deliberately narrow: only phrasings that clearly mean "a credit-card
-    /// balance was paid off" (or its French form). A generic "bill payment",
-    /// "pre-authorized payment", "autopay", or "e-transfer to <person>" is a
-    /// real recurring expense (a phone bill, a mortgage, rent) and must **not**
-    /// be zeroed out.
-    private static let paymentKeywords = [
-        "payment thank you", "payment - thank you", "thank you for your payment",
-        "paiement - merci", "merci de votre paiement", "paiement recu - merci",
-        "credit card payment", "cc payment", "payment received - thank",
-        "pmt received - thank"
-    ]
-
     private static let refundKeywords = [
         "refund", "return", "reversal", "reversed", "credit voucher", "chargeback",
         "cashback", "cash back", "adjustment credit", "rebate", "price adjustment"
-    ]
-
-    private static let incomeKeywords = [
-        "payroll", "direct deposit", "direct dep", "dir dep", "deposit",
-        "salary", "interest paid", "interest earned", "dividend", "gc deposit",
-        "e-transfer from", "transfer from", "govt", "gov canada", "irs", "cra",
-        "reimbursement"
     ]
 
     private static func matches(_ text: String, _ keywords: [String]) -> Bool {
