@@ -41,17 +41,20 @@ struct DashboardView: View {
                         Button {
                             stepMonth(-1)
                         } label: { Image(systemName: "chevron.left") }
+                            .accessibilityLabel("Previous month")
                             .accessibilityIdentifier("dashboard.previousMonth")
 
                         Text(Formatters.month.string(from: summary.month))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Showing \(Formatters.month.string(from: summary.month))")
 
                         Button {
                             stepMonth(1)
                         } label: { Image(systemName: "chevron.right") }
                             .disabled(isCurrentMonth)
+                            .accessibilityLabel("Next month")
                             .accessibilityIdentifier("dashboard.nextMonth")
                     }
                     .buttonStyle(.borderless)

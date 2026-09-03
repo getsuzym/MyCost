@@ -64,13 +64,16 @@ struct CategoryDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                            .accessibilityLabel("Previous month")
                             .accessibilityIdentifier("categoryDetail.previousMonth")
                         Text(Formatters.month.string(from: monthAnchor))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Showing \(Formatters.month.string(from: monthAnchor))")
                         Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
                             .disabled(isCurrentMonth)
+                            .accessibilityLabel("Next month")
                             .accessibilityIdentifier("categoryDetail.nextMonth")
                     }
                     .buttonStyle(.borderless)

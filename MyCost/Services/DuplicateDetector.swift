@@ -211,15 +211,29 @@ struct DuplicateMatchingService {
         let rhsTokens = Set(normalizedMerchant(rhs).split(separator: " ").map(String.init))
         guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
 
-        let intersection = lhsTokens.intersection(rhsTokens).count
-        let union = lhsTokens.union(rhsTokens).count
-        let tokenScore = Double(intersection) / Double(union)
+        // Fuzzy token overlap: a token also counts as shared when it's a
+        // plausible abbreviation of one on the other side ("SQ" ↔ "Square",
+        // "APT" ↔ "Apartment"), which processor prefixes and truncated bank
+        // descriptors produce constantly.
+        let shared = lhsTokens.filter { token in
+            rhsTokens.contains(token)
+                || rhsTokens.contains { isAbbreviation(token, of: $0) || isAbbreviation($0, of: token) }
+        }.count
+        let fuzzyUnion = lhsTokens.count + rhsTokens.count - shared
+        let tokenScore = fuzzyUnion > 0 ? Double(shared) / Double(fuzzyUnion) : 0
+
         let editScore = normalizedEditSimilarity(
             normalizedMerchant(lhs).replacingOccurrences(of: " ", with: ""),
             normalizedMerchant(rhs).replacingOccurrences(of: " ", with: "")
         )
 
         return max(tokenScore, editScore)
+    }
+
+    /// `short` reads as an abbreviation of `long` — a ≥2-character prefix of a
+    /// strictly longer token.
+    private func isAbbreviation(_ short: String, of long: String) -> Bool {
+        short.count >= 2 && short.count < long.count && long.hasPrefix(short)
     }
 
     private func normalizedEditSimilarity(_ lhs: String, _ rhs: String) -> Double {

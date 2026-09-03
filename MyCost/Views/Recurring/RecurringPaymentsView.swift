@@ -94,12 +94,15 @@ struct RecurringPaymentsView: View {
             Section {
                 HStack {
                     Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous month")
                         .accessibilityIdentifier("recurringMonth.previous")
                     Text(monthName)
                         .font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Showing \(monthName)")
                     Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
                         .disabled(isCurrentMonth)
+                        .accessibilityLabel("Next month")
                         .accessibilityIdentifier("recurringMonth.next")
                 }
                 .buttonStyle(.borderless)

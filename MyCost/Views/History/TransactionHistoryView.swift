@@ -68,12 +68,15 @@ struct TransactionHistoryView: View {
                 HStack {
                     if scopeIsMonth {
                         Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                            .accessibilityLabel("Previous month")
                             .accessibilityIdentifier("history.previousMonth")
                         Text(Formatters.month.string(from: monthAnchor))
                             .font(.subheadline).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Showing \(Formatters.month.string(from: monthAnchor))")
                         Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
                             .disabled(isCurrentMonth)
+                            .accessibilityLabel("Next month")
                             .accessibilityIdentifier("history.nextMonth")
                     } else {
                         Text("All months")

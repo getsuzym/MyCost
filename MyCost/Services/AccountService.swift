@@ -71,7 +71,7 @@ struct AccountService {
             result = created
         }
 
-        if saveImmediately { try? modelContext.save() }
+        if saveImmediately { modelContext.saveOrLog("upsert account") }
         return result
     }
 

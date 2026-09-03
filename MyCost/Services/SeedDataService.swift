@@ -19,7 +19,7 @@ enum SeedDataService {
             transaction.spendingCountOverridden = false
             changed = true
         }
-        if changed { try? modelContext.save() }
+        if changed { modelContext.saveOrLog("migration clearSpendingOverride.v1") }
     }
 
     @MainActor
@@ -28,7 +28,7 @@ enum SeedDataService {
 
         if categories.isEmpty {
             Category.defaults.forEach(modelContext.insert)
-            try? modelContext.save()
+            modelContext.saveOrLog("seed default categories")
             return
         }
 

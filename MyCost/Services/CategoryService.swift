@@ -127,7 +127,7 @@ struct CategoryService {
         for (index, category) in orderedCategories.enumerated() {
             category.sortOrder = index
         }
-        try? modelContext.save()
+        modelContext.saveOrLog("reorder categories")
     }
 
     @MainActor
@@ -178,7 +178,7 @@ struct CategoryService {
             var changed = false
             if !existing.isFallback { existing.isFallback = true; changed = true }
             if !existing.isActive { existing.isActive = true; changed = true }
-            if changed { try? modelContext.save() }
+            if changed { modelContext.saveOrLog("repair fallback category") }
             return existing
         }
 
@@ -190,7 +190,7 @@ struct CategoryService {
             isFallback: true
         )
         modelContext.insert(fallback)
-        try? modelContext.save()
+        modelContext.saveOrLog("create fallback category")
         return fallback
     }
 }

@@ -65,7 +65,9 @@ private struct ToastHost: ViewModifier {
 
 extension View {
     /// Attach once, near the app root, to render `ToastCenter` messages.
-    func toastHost(_ center: ToastCenter = .shared) -> some View {
-        modifier(ToastHost(center: center))
+    /// Defaults to the shared center; pass one in tests/previews.
+    @MainActor
+    func toastHost(_ center: ToastCenter? = nil) -> some View {
+        modifier(ToastHost(center: center ?? .shared))
     }
 }

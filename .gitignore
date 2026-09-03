@@ -1,10 +1,30 @@
+# macOS
 .DS_Store
-xcuserdata/
+
+# Xcode
+build/
 DerivedData/
 *.xcuserstate
+*.xcscmblueprint
 *.xccheckout
+xcuserdata/
 *.moved-aside
+*.hmap
 *.ipa
 *.dSYM.zip
 *.dSYM
+timeline.xctimeline
+playground.xcworkspace
 
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CI / test output
+*.xcresult
+TestResults-*.xcresult
+
+# Fastlane / secrets
+*.mobileprovision
+*.p12
+*.cer

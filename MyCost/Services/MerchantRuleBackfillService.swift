@@ -81,7 +81,7 @@ struct MerchantRuleBackfillService {
         }
 
         if let modelContext, outcome.didChangeAnything {
-            try? modelContext.save()
+            modelContext.saveOrLog("backfill \(outcome.updatedCount) recent transactions", logger: AppLog.rules)
         }
         return outcome
     }

@@ -77,11 +77,16 @@ struct MonthTransactionsListView: View {
 
                 HStack {
                     Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous month")
+                        .accessibilityIdentifier("monthList.previousMonth")
                     Text(Formatters.month.string(from: monthAnchor))
                         .font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Showing \(Formatters.month.string(from: monthAnchor))")
                     Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
                         .disabled(isCurrentMonth)
+                        .accessibilityLabel("Next month")
+                        .accessibilityIdentifier("monthList.nextMonth")
                 }
                 .buttonStyle(.borderless)
 

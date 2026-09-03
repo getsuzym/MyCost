@@ -54,6 +54,7 @@
 		000000000000000000000133 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000034 /* AccountService.swift */; };
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
+		00000000000000000000090B /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090C /* AppLog.swift */; };
 		000000000000000000000907 /* MerchantRuleBackfillService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000908 /* MerchantRuleBackfillService.swift */; };
 		000000000000000000000903 /* RecurrenceRuleEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000904 /* RecurrenceRuleEditor.swift */; };
 		000000000000000000000134 /* TransactionNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000035 /* TransactionNormalizer.swift */; };
@@ -118,6 +119,7 @@
 		000000000000000000000034 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
+		00000000000000000000090C /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		000000000000000000000908 /* MerchantRuleBackfillService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleBackfillService.swift; sourceTree = "<group>"; };
 		000000000000000000000035 /* TransactionNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionNormalizer.swift; sourceTree = "<group>"; };
 		000000000000000000000036 /* BankLayoutProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankLayoutProfile.swift; sourceTree = "<group>"; };
@@ -247,6 +249,7 @@
 				000000000000000000000034 /* AccountService.swift */,
 				000000000000000000000902 /* RecurrenceSchedule.swift */,
 				000000000000000000000906 /* RecurringPaymentService.swift */,
+				00000000000000000000090C /* AppLog.swift */,
 				000000000000000000000908 /* MerchantRuleBackfillService.swift */,
 				000000000000000000000035 /* TransactionNormalizer.swift */,
 				000000000000000000000036 /* BankLayoutProfile.swift */,
@@ -505,6 +508,7 @@
 				000000000000000000000133 /* AccountService.swift in Sources */,
 				000000000000000000000901 /* RecurrenceSchedule.swift in Sources */,
 				000000000000000000000905 /* RecurringPaymentService.swift in Sources */,
+				00000000000000000000090B /* AppLog.swift in Sources */,
 				000000000000000000000907 /* MerchantRuleBackfillService.swift in Sources */,
 				000000000000000000000134 /* TransactionNormalizer.swift in Sources */,
 				000000000000000000000135 /* BankLayoutProfile.swift in Sources */,

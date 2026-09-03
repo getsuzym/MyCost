@@ -243,7 +243,7 @@ struct MerchantRuleService {
             }
             match.isEnabled = true
             match.updatedAt = .now
-            if saveImmediately { try? modelContext.save() }
+            if saveImmediately { modelContext.saveOrLog("learn merchant rule", logger: AppLog.rules) }
             return match
         }
 
@@ -258,7 +258,7 @@ struct MerchantRuleService {
             category: category
         )
         modelContext.insert(rule)
-        if saveImmediately { try? modelContext.save() }
+        if saveImmediately { modelContext.saveOrLog("learn merchant rule", logger: AppLog.rules) }
         return rule
     }
 

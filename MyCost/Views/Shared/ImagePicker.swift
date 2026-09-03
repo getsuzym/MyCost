@@ -30,7 +30,10 @@ struct ImagePicker: UIViewControllerRepresentable {
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
-        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        // Parameterless config = fully out-of-process picker: no photo-library
+        // permission prompt and no `NSPhotoLibraryUsageDescription` needed, since
+        // we only read the chosen images and never look up asset identifiers.
+        var configuration = PHPickerConfiguration()
         configuration.filter = .images
         configuration.selectionLimit = selectionLimit
 
