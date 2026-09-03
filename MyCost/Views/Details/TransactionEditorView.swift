@@ -37,8 +37,12 @@ struct TransactionEditorView: View {
     @State private var markFutureRecurring = false
     @State private var note = ""
     @State private var countsAsSpending = true
-    /// Set once from the normalizer; cleared if the user overrides `countsAsSpending`.
+    /// Suppresses the "sign is unusual" hint for an existing row.
     @State private var directionIsUserSet = false
+    /// True only when the user actually flips the "Counts as spending" toggle
+    /// (its `Binding.set` fires) — not when `loadInitialValues` seeds the state.
+    /// Drives `Transaction.spendingCountOverridden`.
+    @State private var userChangedSpendingToggle = false
     @State private var validationMessage: String?
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
@@ -102,9 +106,18 @@ struct TransactionEditorView: View {
             }
 
             Section {
-                Toggle("Counts as spending", isOn: $countsAsSpending)
-                    .accessibilityIdentifier("transactionEditor.countsAsSpending")
-                    .onChange(of: countsAsSpending) { _, _ in directionIsUserSet = true }
+                Toggle("Counts as spending", isOn: Binding(
+                    get: { countsAsSpending },
+                    set: { newValue in
+                        // Only a real user tap routes through here — programmatic
+                        // seeding in loadInitialValues sets `countsAsSpending`
+                        // directly and doesn't hit this closure.
+                        countsAsSpending = newValue
+                        directionIsUserSet = true
+                        userChangedSpendingToggle = true
+                    }
+                ))
+                .accessibilityIdentifier("transactionEditor.countsAsSpending")
                 LabeledContent("Spending amount") {
                     Text(Formatters.currencyString(for: countsAsSpending ? normalization.normalizedAmount : 0))
                         .foregroundStyle(.secondary)
@@ -270,11 +283,13 @@ struct TransactionEditorView: View {
         directionIsUserSet = true
     }
 
-    /// Writes normalized direction fields onto `transaction`. Honors a manual
-    /// `countsAsSpending` override; otherwise uses the normalizer verdict.
+    /// Writes normalized direction fields onto `transaction`. A hand-toggled
+    /// "Counts as spending" is frozen (`spendingCountOverridden`); otherwise the
+    /// row is (re-)normalized and any stale override is dropped so the recurring
+    /// re-check in `Transaction.contributesToSpending` governs again.
     private func applyDirection(to transaction: Transaction) {
         let normalized = normalization
-        if directionIsUserSet {
+        if userChangedSpendingToggle {
             transaction.normalizedAmount = countsAsSpending ? normalized.normalizedAmount : 0
             transaction.transactionDirection = normalized.direction
             transaction.accountType = accountType
@@ -283,6 +298,7 @@ struct TransactionEditorView: View {
             transaction.spendingCountOverridden = true
         } else {
             transaction.applyNormalization(normalized, accountType: accountType)
+            transaction.spendingCountOverridden = false
         }
     }
 

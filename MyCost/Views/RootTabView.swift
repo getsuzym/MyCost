@@ -61,6 +61,7 @@ struct RootTabView: View {
         }
         .task {
             SeedDataService.seedDefaultCategoriesIfNeeded(modelContext: modelContext)
+            SeedDataService.resetStaleSpendingOverridesIfNeeded(modelContext: modelContext)
         }
     }
 

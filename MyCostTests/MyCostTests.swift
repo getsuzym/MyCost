@@ -2538,6 +2538,28 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, abs(mortgage.amount))
     }
 
+    func testResetStaleSpendingOverridesClearsTheFlagOnce() throws {
+        UserDefaults.standard.removeObject(forKey: "mycost.migration.clearSpendingOverride.v1")
+        let mortgage = Transaction(
+            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
+            amount: -877.67, transactionDate: date(2026, 8, 7),
+            countsAsSpending: false, spendingCountOverridden: true
+        )
+        mortgage.isRecurring = true
+        context.insert(mortgage)
+        try context.save()
+        XCTAssertFalse(mortgage.contributesToSpending) // blocked by the stale override
+
+        SeedDataService.resetStaleSpendingOverridesIfNeeded(modelContext: context)
+        XCTAssertFalse(mortgage.spendingCountOverridden)
+        XCTAssertTrue(mortgage.contributesToSpending) // recurring re-check governs again
+
+        // A genuine later override survives a second run.
+        mortgage.spendingCountOverridden = true
+        SeedDataService.resetStaleSpendingOverridesIfNeeded(modelContext: context)
+        XCTAssertTrue(mortgage.spendingCountOverridden)
+    }
+
     func testConfidentIncomeMarkedRecurringIsNotRescued() throws {
         let cat = makeCategory("Income", sortOrder: 0)
         let payroll = Transaction(
