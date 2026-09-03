@@ -9,6 +9,12 @@ struct TransactionHistoryView: View {
     @State private var isAddingTransaction = false
     @State private var categoryFilter: CategoryFilter = .all
     @State private var recurringFilter: RecurringFilter = .all
+    @State private var searchText = ""
+    /// Defaults to the current month; the user can step months or switch to All.
+    @State private var scopeIsMonth = true
+    @State private var monthAnchor = Date()
+
+    private let monthly = MonthlyTransactionsService()
 
     private enum CategoryFilter: Hashable {
         case all
@@ -16,17 +22,36 @@ struct TransactionHistoryView: View {
         case category(UUID)
     }
 
+    private var isCurrentMonth: Bool {
+        Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
+    }
+
+    private var scopedTransactions: [Transaction] {
+        scopeIsMonth ? monthly.transactions(inMonthContaining: monthAnchor, from: transactions) : transactions
+    }
+
     private var filteredTransactions: [Transaction] {
         let byCategory: [Transaction]
         switch categoryFilter {
         case .all:
-            byCategory = transactions
+            byCategory = scopedTransactions
         case .uncategorized:
-            byCategory = transactions.filter { $0.category == nil }
+            byCategory = scopedTransactions.filter { $0.category == nil }
         case .category(let id):
-            byCategory = transactions.filter { $0.category?.id == id }
+            byCategory = scopedTransactions.filter { $0.category?.id == id }
         }
-        return byCategory.filter { recurringFilter.includes($0) }
+        let byRecurring = byCategory.filter { recurringFilter.includes($0) }
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return byRecurring }
+        return byRecurring.filter { transaction in
+            transaction.merchantName.localizedCaseInsensitiveContains(query)
+                || transaction.originalDescription.localizedCaseInsensitiveContains(query)
+                || transaction.note.localizedCaseInsensitiveContains(query)
+                || transaction.accountName.localizedCaseInsensitiveContains(query)
+                || (transaction.category?.name.localizedCaseInsensitiveContains(query) ?? false)
+                || NSDecimalNumber(decimal: transaction.amount).stringValue.contains(query)
+        }
     }
 
     private var filterLabel: String {
@@ -39,6 +64,32 @@ struct TransactionHistoryView: View {
 
     var body: some View {
         List {
+            Section {
+                HStack {
+                    if scopeIsMonth {
+                        Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                            .accessibilityIdentifier("history.previousMonth")
+                        Text(Formatters.month.string(from: monthAnchor))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                        Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
+                            .disabled(isCurrentMonth)
+                            .accessibilityIdentifier("history.nextMonth")
+                    } else {
+                        Text("All months")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                    Button(scopeIsMonth ? "All" : "By month") {
+                        scopeIsMonth.toggle()
+                        if scopeIsMonth { monthAnchor = Date() }
+                    }
+                    .font(.footnote)
+                    .accessibilityIdentifier("history.toggleTimeScope")
+                }
+                .buttonStyle(.borderless)
+            }
+
             Section {
                 Picker("Recurring", selection: $recurringFilter) {
                     ForEach(RecurringFilter.allCases) { Text($0.label).tag($0) }
@@ -59,10 +110,15 @@ struct TransactionHistoryView: View {
             }
 
             if filteredTransactions.isEmpty {
-                ContentUnavailableView(
-                    transactions.isEmpty ? "No transactions" : "No transactions in \(filterLabel)",
-                    systemImage: "list.bullet.rectangle"
-                )
+                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    let scopeName = scopeIsMonth ? Formatters.month.string(from: monthAnchor) : filterLabel
+                    ContentUnavailableView(
+                        transactions.isEmpty ? "No transactions" : "No transactions in \(scopeName)",
+                        systemImage: "list.bullet.rectangle"
+                    )
+                }
             } else {
                 ForEach(filteredTransactions) { transaction in
                     NavigationLink {
@@ -76,6 +132,7 @@ struct TransactionHistoryView: View {
             }
         }
         .navigationTitle("Transactions")
+        .searchable(text: $searchText, prompt: "Search transactions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -91,6 +148,11 @@ struct TransactionHistoryView: View {
                 TransactionEditorView(mode: .add)
             }
         }
+    }
+
+    private func stepMonth(_ delta: Int) {
+        guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
+        monthAnchor = moved > Date() ? Date() : moved
     }
 
     private func deleteTransactions(at offsets: IndexSet) {

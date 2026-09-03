@@ -46,21 +46,21 @@ final class MyCostUITests: XCTestCase {
 
     // MARK: - Navigation structure
 
-    func testBottomNavigationHasFourTabsAndNoImportOrReview() {
+    func testBottomNavigationExposesDashboardRecurringCategoriesRules() {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 5))
 
         XCTAssertTrue(tabBar.buttons["Dashboard"].exists)
-        XCTAssertTrue(tabBar.buttons["Transactions"].exists)
         XCTAssertTrue(tabBar.buttons["Recurring"].exists)
+        XCTAssertTrue(tabBar.buttons["Categories"].exists)
+        XCTAssertTrue(tabBar.buttons["Rules"].exists)
         XCTAssertTrue(tabBar.buttons["More"].exists)
 
+        // Transactions no longer has its own tab; Import/Review never did.
+        XCTAssertFalse(tabBar.buttons["Transactions"].exists)
         XCTAssertFalse(tabBar.buttons["Import"].exists)
         XCTAssertFalse(tabBar.buttons["Review"].exists)
-        XCTAssertFalse(tabBar.buttons["Categories"].exists)
         XCTAssertFalse(tabBar.buttons["Accounts"].exists)
-        XCTAssertFalse(tabBar.buttons["Rules"].exists)
-        XCTAssertFalse(tabBar.buttons["History"].exists)
     }
 
     func testImportIconIsInTheDashboardToolbar() {
@@ -71,14 +71,21 @@ final class MyCostUITests: XCTestCase {
         XCTAssertFalse(app.buttons["app.reviewBanner"].exists)
     }
 
-    func testMoreTabExposesSecondaryManagementScreens() {
+    func testCategoriesAndRulesTabsOpenTheirScreens() {
+        app.tabBars.buttons["Categories"].tap()
+        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+
+        app.tabBars.buttons["Rules"].tap()
+        XCTAssertTrue(app.navigationBars["Merchant Rules"].waitForExistence(timeout: 5))
+    }
+
+    func testMoreTabExposesTransactionsAndAccounts() {
         app.tabBars.buttons["More"].tap()
-        XCTAssertTrue(app.buttons["more.categories"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["more.merchantRules"].exists)
+        XCTAssertTrue(app.buttons["more.transactions"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["more.accounts"].exists)
 
-        app.buttons["more.categories"].tap()
-        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+        app.buttons["more.transactions"].tap()
+        XCTAssertTrue(app.navigationBars["Transactions"].waitForExistence(timeout: 5))
     }
 
     // MARK: - Add-transaction crash guards
@@ -102,11 +109,13 @@ final class MyCostUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
     }
 
-    func testAddTransactionFromTransactionsTabDoesNotCrash() {
-        app.tabBars.buttons["Transactions"].tap()
+    func testAddTransactionFromMoreAllTransactionsDoesNotCrash() {
+        app.tabBars.buttons["More"].tap()
+        app.buttons["more.transactions"].tap()
+        XCTAssertTrue(app.buttons["history.addTransaction"].waitForExistence(timeout: 5))
         app.buttons["history.addTransaction"].tap()
-        fillEditorAndSave(merchant: "From Transactions", amount: "9.99")
-        XCTAssertTrue(app.staticTexts["From Transactions"].waitForExistence(timeout: 5))
+        fillEditorAndSave(merchant: "From History", amount: "9.99")
+        XCTAssertTrue(app.staticTexts["From History"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.state, .runningForeground)
     }
 }

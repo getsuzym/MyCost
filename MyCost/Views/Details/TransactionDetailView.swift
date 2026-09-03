@@ -30,7 +30,7 @@ struct TransactionDetailView: View {
                 ))
                 .accessibilityIdentifier("transactionDetail.recurring")
                 if let recurringPayment = transaction.recurringPayment {
-                    LabeledContent("Frequency", value: recurringPayment.frequency.label)
+                    LabeledContent("Frequency", value: recurringPayment.schedule().label)
                 }
             }
 

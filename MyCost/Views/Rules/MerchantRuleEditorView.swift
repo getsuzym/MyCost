@@ -13,6 +13,10 @@ struct MerchantRuleEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    @Query(sort: \Transaction.transactionDate, order: .reverse) private var allTransactions: [Transaction]
+    @Query private var recurringPayments: [RecurringPayment]
+    @Query(sort: \MerchantRule.priority, order: .reverse) private var allRules: [MerchantRule]
+
     let rule: MerchantRule?
     let categories: [Category]
     var initialMatchText: String = ""
@@ -36,6 +40,7 @@ struct MerchantRuleEditorView: View {
     @State private var didLoad = false
 
     private let merchantRuleService = MerchantRuleService()
+    private let backfillService = MerchantRuleBackfillService()
 
     private var title: String { rule == nil ? "New Rule" : "Edit Rule" }
 
@@ -244,12 +249,36 @@ struct MerchantRuleEditorView: View {
 
         do {
             try modelContext.save()
-            ToastCenter.shared.success(isEditing ? CRUDFeedback.updated("rule") : CRUDFeedback.added("rule"))
+            let backfillMessage = backfillRecentTransactions()
+            ToastCenter.shared.success(
+                backfillMessage ?? (isEditing ? CRUDFeedback.updated("rule") : CRUDFeedback.added("rule"))
+            )
             onSaved(affected)
             dismiss()
         } catch {
             validationMessage = "Save failed: \(error.localizedDescription)"
             ToastCenter.shared.error(CRUDFeedback.saveFailure("rule"))
         }
+    }
+
+    /// Re-apply the full rule set to the last 3 months of saved transactions, so
+    /// a new/edited rule (recurring ones especially) reflects on history right
+    /// away and freshly-recurring rows are linked to a matching series. Returns
+    /// a summary string when something changed.
+    private func backfillRecentTransactions() -> String? {
+        // A brand-new rule isn't in `@Query allRules` yet this render pass.
+        let rules = (try? modelContext.fetch(FetchDescriptor<MerchantRule>())) ?? allRules
+        let outcome = backfillService.apply(
+            rules: rules,
+            to: allTransactions,
+            recurringPayments: recurringPayments,
+            modelContext: modelContext
+        )
+        guard outcome.didChangeAnything else { return nil }
+        var parts = ["Applied to \(outcome.updatedCount) recent transaction\(outcome.updatedCount == 1 ? "" : "s")"]
+        if outcome.markedRecurringCount > 0 {
+            parts.append("\(outcome.markedRecurringCount) marked recurring")
+        }
+        return parts.joined(separator: " · ")
     }
 }

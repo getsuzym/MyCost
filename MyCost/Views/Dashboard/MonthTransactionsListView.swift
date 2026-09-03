@@ -137,7 +137,7 @@ private struct MonthListRow: View {
                 Text(transaction.category?.name ?? "Uncategorized")
                 if transaction.isRecurring {
                     Text("·")
-                    Text(transaction.recurringPayment?.frequency.label ?? "Recurring")
+                    Text(transaction.recurringPayment?.schedule().label ?? "Recurring")
                         .foregroundStyle(.blue)
                 }
                 if transaction.isExcluded {

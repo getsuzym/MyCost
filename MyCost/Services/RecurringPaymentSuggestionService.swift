@@ -78,43 +78,20 @@ struct RecurringPaymentSuggestionService {
 
     func expectedMonthlyAmount(for recurringPayment: RecurringPayment) -> Decimal {
         recurringPayment.expectedAmount * Decimal(
-            recurringPayment.frequency.monthlyMultiplier(customIntervalDays: recurringPayment.customIntervalDays)
+            recurringPayment.frequency.monthlyMultiplier(
+                customIntervalDays: recurringPayment.customIntervalDays,
+                monthInterval: recurringPayment.monthInterval
+            )
         )
     }
 
     /// The series' expected occurrence dates that fall **inside the calendar
-    /// month** containing `date` — nothing from the month before or after. Walks
-    /// the real cadence (frequency + `customIntervalDays`) from an anchor (the
-    /// series' most recent transaction, else `nextExpectedDate`, else
-    /// `createdAt`), so a biweekly series yields 2 or 3 dates depending on the
-    /// month, a monthly series 1, and quarterly / yearly 0 in an off month.
+    /// month** containing `date` — nothing from the month before or after.
+    /// Delegates to the series' `RecurrenceSchedule`, so it honours flexible
+    /// rules (every N months, Nth weekday, Nth business day) as well as the
+    /// fixed periods.
     func expectedOccurrenceDates(for recurringPayment: RecurringPayment, inMonthContaining date: Date) -> [Date] {
-        guard recurringPayment.frequency != .none else { return [] }
-        guard let month = calendar.dateInterval(of: .month, for: date) else { return [] }
-
-        let frequency = recurringPayment.frequency
-        let interval = recurringPayment.customIntervalDays
-        var cursor = occurrenceAnchor(for: recurringPayment)
-
-        // Step back to the last occurrence strictly before the month begins.
-        var guardRail = 0
-        while cursor >= month.start, guardRail < 1_000 {
-            guard let previous = frequency.previousDate(before: cursor, calendar: calendar, customIntervalDays: interval) else { break }
-            cursor = previous
-            guardRail += 1
-        }
-
-        // Step forward, collecting only the occurrences that fall in the month.
-        var dates: [Date] = []
-        guardRail = 0
-        while guardRail < 1_000 {
-            guard let next = frequency.nextDate(after: cursor, calendar: calendar, customIntervalDays: interval) else { break }
-            cursor = next
-            guardRail += 1
-            if cursor >= month.end { break }
-            if cursor >= month.start { dates.append(cursor) }
-        }
-        return dates
+        recurringPayment.schedule(calendar: calendar).occurrences(inMonthContaining: date)
     }
 
     /// How many times this series is expected to land in the month containing
@@ -191,15 +168,14 @@ struct RecurringPaymentSuggestionService {
         "\(accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(MerchantRuleNormalizer.normalizedMerchantKey(for: merchantName))"
     }
 
-    private func occurrenceAnchor(for recurringPayment: RecurringPayment) -> Date {
-        if let latestTransaction = recurringPayment.transactions.map(\.transactionDate).max() {
-            return latestTransaction
-        }
-        return recurringPayment.nextExpectedDate ?? recurringPayment.createdAt
-    }
-
     func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency, customIntervalDays: Int = 30) -> Date? {
         frequency.nextDate(after: date, calendar: calendar, customIntervalDays: customIntervalDays)
+    }
+
+    /// The next occurrence after `date` for a fully-specified schedule (honours
+    /// flexible rules). Used by the editors to refresh `nextExpectedDate`.
+    func nextExpectedDate(after date: Date, schedule: RecurrenceSchedule) -> Date? {
+        schedule.nextOccurrence(after: date)
     }
 
     private func suggestion(from transactions: [Transaction]) -> RecurringPaymentSuggestion? {

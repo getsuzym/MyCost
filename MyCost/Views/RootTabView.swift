@@ -15,16 +15,22 @@ struct RootTabView: View {
             .accessibilityIdentifier("tab.dashboard")
 
             NavigationStack {
-                TransactionHistoryView()
-            }
-            .tabItem { Label("Transactions", systemImage: "list.bullet") }
-            .accessibilityIdentifier("tab.transactions")
-
-            NavigationStack {
                 RecurringPaymentsView()
             }
             .tabItem { Label("Recurring", systemImage: "repeat") }
             .accessibilityIdentifier("tab.recurring")
+
+            NavigationStack {
+                CategoryManagementView()
+            }
+            .tabItem { Label("Categories", systemImage: "folder") }
+            .accessibilityIdentifier("tab.categories")
+
+            NavigationStack {
+                MerchantRulesView()
+            }
+            .tabItem { Label("Rules", systemImage: "wand.and.stars") }
+            .accessibilityIdentifier("tab.rules")
 
             NavigationStack {
                 MoreView()

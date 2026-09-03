@@ -876,6 +876,150 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(october.occurrences.allSatisfy { gregorian.component(.month, from: $0.date) == 10 })
     }
 
+    // MARK: - Flexible recurrence rules
+
+    func testNthWeekdayScheduleLandsOnTheFirstMondayOfEachMonth() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .nthWeekday,
+            anchorDate: date(2026, 1, 1),
+            weekdayOrdinal: 1,
+            weekday: 2 // Monday
+        )
+
+        for month in [3, 6, 9, 12] {
+            let hits = schedule.occurrences(inMonthContaining: date(2026, month, 15))
+            XCTAssertEqual(hits.count, 1, "month \(month)")
+            let day = gregorian.component(.day, from: hits[0])
+            XCTAssertEqual(gregorian.component(.weekday, from: hits[0]), 2)
+            XCTAssertEqual(gregorian.component(.month, from: hits[0]), month)
+            XCTAssertLessThanOrEqual(day, 7)
+        }
+
+        XCTAssertEqual(schedule.label, "First Monday of the month")
+    }
+
+    func testLastWeekdayScheduleUsesTheFinalMatchingWeekdayInTheMonth() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .nthWeekday,
+            anchorDate: date(2026, 1, 1),
+            weekdayOrdinal: -1,
+            weekday: 6 // Friday
+        )
+        let hits = schedule.occurrences(inMonthContaining: date(2026, 8, 10))
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(gregorian.component(.weekday, from: hits[0]), 6)
+        // Last Friday of August 2026 is the 28th; the 29th–31st are Sat–Mon.
+        XCTAssertGreaterThanOrEqual(gregorian.component(.day, from: hits[0]), 25)
+        XCTAssertEqual(schedule.label, "Last Friday of the month")
+    }
+
+    func testFirstBusinessDayScheduleSkipsWeekends() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .nthBusinessDay,
+            anchorDate: date(2026, 1, 1),
+            weekdayOrdinal: 1
+        )
+
+        // November 1, 2026 is a Sunday -> first business day is Monday the 2nd.
+        let november = schedule.occurrences(inMonthContaining: date(2026, 11, 20))
+        XCTAssertEqual(november.count, 1)
+        XCTAssertEqual(gregorian.component(.day, from: november[0]), 2)
+
+        // September 1, 2026 is a Tuesday -> first business day is the 1st.
+        let september = schedule.occurrences(inMonthContaining: date(2026, 9, 20))
+        XCTAssertEqual(gregorian.component(.day, from: september[0]), 1)
+
+        for hit in november + september {
+            let weekday = gregorian.component(.weekday, from: hit)
+            XCTAssertFalse(weekday == 1 || weekday == 7)
+        }
+        XCTAssertEqual(schedule.label, "First business day of the month")
+    }
+
+    func testEveryNMonthsScheduleAppearsOnlyInPhaseMonths() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .everyNMonths,
+            anchorDate: date(2026, 3, 15),
+            monthInterval: 6
+        )
+
+        // In phase: March and September (6 months apart).
+        XCTAssertEqual(schedule.occurrences(inMonthContaining: date(2026, 3, 1)).map { gregorian.component(.day, from: $0) }, [15])
+        XCTAssertEqual(schedule.occurrences(inMonthContaining: date(2026, 9, 1)).map { gregorian.component(.day, from: $0) }, [15])
+        XCTAssertEqual(schedule.occurrences(inMonthContaining: date(2027, 3, 1)).map { gregorian.component(.day, from: $0) }, [15])
+
+        // Off phase: every other month is empty.
+        for month in [1, 2, 4, 5, 6, 7, 8, 10, 11, 12] {
+            XCTAssertTrue(schedule.occurrences(inMonthContaining: date(2026, month, 1)).isEmpty, "month \(month)")
+        }
+        XCTAssertEqual(schedule.label, "Every 6 months")
+    }
+
+    func testEveryNMonthsScheduleClampsTheDayToShortMonths() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .everyNMonths,
+            anchorDate: date(2026, 8, 31),
+            monthInterval: 6
+        )
+        // Aug 31 + 6 months lands in February 2027 -> clamped to the 28th.
+        let hits = schedule.occurrences(inMonthContaining: date(2027, 2, 10))
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(gregorian.component(.month, from: hits[0]), 2)
+        XCTAssertEqual(gregorian.component(.day, from: hits[0]), 28)
+    }
+
+    func testMonthlyExpectationHonoursAFlexibleFirstMondaySeries() {
+        let service = RecurringPaymentSuggestionService()
+        let strata = RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Strata fee",
+            expectedAmount: 300,
+            frequency: .nthWeekday,
+            weekdayOrdinal: 1,
+            weekday: 2,
+            nextExpectedDate: date(2026, 1, 5)
+        )
+
+        let paid = Transaction(
+            accountName: "Chequing",
+            merchantName: "Strata fee",
+            amount: 300,
+            transactionDate: date(2026, 9, 7),
+            isRecurring: true
+        )
+
+        let expectation = service.monthlyExpectation(
+            activeSeries: [strata],
+            recurringTransactions: [paid],
+            inMonthContaining: date(2026, 9, 20)
+        )
+        XCTAssertEqual(expectation.expectedCount, 1)
+        XCTAssertEqual(expectation.expectedTotal, 300)
+        XCTAssertEqual(expectation.completedCount, 1)
+        XCTAssertEqual(expectation.remainingTotal, 0)
+    }
+
+    func testNextOccurrenceAfterAdvancesFlexibleSchedulesAcrossMonths() {
+        let gregorian = Calendar(identifier: .gregorian)
+        let schedule = RecurrenceSchedule(
+            frequency: .nthWeekday,
+            anchorDate: date(2026, 1, 1),
+            weekdayOrdinal: 1,
+            weekday: 2
+        )
+        guard let next = schedule.nextOccurrence(after: date(2026, 9, 10)) else {
+            return XCTFail("expected a next occurrence")
+        }
+        // The first Monday of September has passed, so the next is in October.
+        XCTAssertEqual(gregorian.component(.month, from: next), 10)
+        XCTAssertEqual(gregorian.component(.weekday, from: next), 2)
+    }
+
     func testSpendingSummaryDistinguishesRecurringAndNonRecurringSpending() {
         let recurringPayment = RecurringPayment(
             merchantName: "Cloud Storage",
@@ -2590,6 +2734,186 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(AccountService().resolveType(for: "Unknown", in: accounts), .other)
     }
 
+    func testDeletingARecurringSeriesLeavesItsTransactionsUntouched() throws {
+        let groceries = Category(name: "Groceries", colorHex: "#111111", symbolName: "cart")
+        context.insert(groceries)
+
+        let series = RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Mortgage",
+            expectedAmount: 800,
+            frequency: .biweekly
+        )
+        context.insert(series)
+
+        let paidDate = date(2026, 9, 4)
+        let txn = Transaction(
+            accountName: "Chequing",
+            merchantName: "Mortgage",
+            amount: 800,
+            transactionDate: paidDate,
+            isRecurring: true,
+            category: groceries,
+            recurringPayment: series
+        )
+        context.insert(txn)
+        try context.save()
+        let txnID = txn.id
+
+        try RecurringPaymentService().delete(series, modelContext: context)
+
+        // The series record is gone.
+        XCTAssertTrue(try context.fetch(FetchDescriptor<RecurringPayment>()).isEmpty)
+
+        // The transaction is still there and unchanged apart from the soft link.
+        let survivors = try context.fetch(FetchDescriptor<Transaction>())
+        XCTAssertEqual(survivors.count, 1)
+        let survivor = try XCTUnwrap(survivors.first { $0.id == txnID })
+        XCTAssertTrue(survivor.isRecurring)
+        XCTAssertEqual(survivor.amount, 800)
+        XCTAssertEqual(survivor.transactionDate, paidDate)
+        XCTAssertEqual(survivor.category?.name, "Groceries")
+        XCTAssertNil(survivor.recurringPayment)
+    }
+
+    func testPausingASeriesKeepsItsTransactionsAndDropsItFromExpectedTotals() throws {
+        let series = RecurringPayment(
+            accountName: "Chequing",
+            merchantName: "Gym",
+            expectedAmount: 50,
+            frequency: .monthly,
+            nextExpectedDate: date(2026, 9, 5)
+        )
+        context.insert(series)
+        let txn = Transaction(
+            accountName: "Chequing",
+            merchantName: "Gym",
+            amount: 50,
+            transactionDate: date(2026, 9, 5),
+            isRecurring: true,
+            recurringPayment: series
+        )
+        context.insert(txn)
+        try context.save()
+
+        try RecurringPaymentService().setActive(false, for: series, modelContext: context)
+
+        XCTAssertFalse(series.isActive)
+        XCTAssertEqual(txn.recurringPayment?.id, series.id) // link intact
+        XCTAssertTrue(txn.isRecurring)
+
+        let active = try context.fetch(FetchDescriptor<RecurringPayment>()).filter(\.isActive)
+        let expectation = RecurringPaymentSuggestionService().monthlyExpectation(
+            activeSeries: active,
+            recurringTransactions: [txn],
+            inMonthContaining: date(2026, 9, 15)
+        )
+        XCTAssertEqual(expectation.expectedCount, 0)
+    }
+
+    // MARK: - Attaching rules & 3-month backfill
+
+    func testCreatingARecurringRuleBackfillsTheLastThreeMonths() throws {
+        let now = date(2026, 9, 15)
+        let housing = Category(name: "Housing", colorHex: "#123456", symbolName: "house")
+        context.insert(housing)
+
+        let recentA = Transaction(accountName: "Chequing", merchantName: "PROPERTY MGMT LLC", originalDescription: "PROPERTY MGMT LLC", amount: 1800, transactionDate: date(2026, 9, 1))
+        let recentB = Transaction(accountName: "Chequing", merchantName: "PROPERTY MGMT LLC", originalDescription: "PROPERTY MGMT LLC", amount: 1800, transactionDate: date(2026, 7, 2))
+        let old = Transaction(accountName: "Chequing", merchantName: "PROPERTY MGMT LLC", originalDescription: "PROPERTY MGMT LLC", amount: 1800, transactionDate: date(2026, 5, 1))
+        [recentA, recentB, old].forEach(context.insert)
+
+        let rule = MerchantRule(
+            matchText: "PROPERTY MGMT",
+            displayName: "Rent",
+            matchType: .contains,
+            isRecurring: true,
+            recurringFrequency: .monthly,
+            category: housing
+        )
+        context.insert(rule)
+        try context.save()
+
+        let outcome = MerchantRuleBackfillService().apply(
+            rules: [rule],
+            to: [recentA, recentB, old],
+            referenceDate: now,
+            months: 3,
+            modelContext: context
+        )
+
+        XCTAssertEqual(outcome.scannedCount, 2)         // only the two inside the window
+        XCTAssertEqual(outcome.markedRecurringCount, 2)
+        XCTAssertTrue(recentA.isRecurring)
+        XCTAssertTrue(recentB.isRecurring)
+        XCTAssertFalse(old.isRecurring)                 // out of window, untouched
+        XCTAssertEqual(recentA.merchantName, "Rent")
+        XCTAssertEqual(recentA.category?.name, "Housing")
+        XCTAssertEqual(old.merchantName, "PROPERTY MGMT LLC")
+    }
+
+    func testBackfillLinksFreshlyRecurringTransactionsToAMatchingSeries() throws {
+        let now = date(2026, 9, 15)
+        let series = RecurringPayment(accountName: "Chequing", merchantName: "Rent", expectedAmount: 1800, frequency: .monthly)
+        context.insert(series)
+        let txn = Transaction(accountName: "Chequing", merchantName: "PROPERTY MGMT LLC", originalDescription: "PROPERTY MGMT LLC", amount: 1800, transactionDate: date(2026, 9, 1))
+        context.insert(txn)
+        let rule = MerchantRule(matchText: "PROPERTY MGMT", displayName: "Rent", matchType: .contains, isRecurring: true, recurringFrequency: .monthly)
+        context.insert(rule)
+        try context.save()
+
+        let outcome = MerchantRuleBackfillService().apply(
+            rules: [rule],
+            to: [txn],
+            recurringPayments: [series],
+            referenceDate: now,
+            modelContext: context
+        )
+
+        XCTAssertEqual(outcome.linkedToSeriesCount, 1)
+        XCTAssertEqual(txn.recurringPayment?.id, series.id)
+        XCTAssertTrue(txn.isRecurring)
+    }
+
+    func testBackfillIgnoresNonMatchingAndDisabledRules() throws {
+        let now = date(2026, 9, 15)
+        let txn = Transaction(accountName: "Chequing", merchantName: "COFFEE HUT", originalDescription: "COFFEE HUT", amount: 5, transactionDate: date(2026, 9, 1))
+        context.insert(txn)
+        let nonMatching = MerchantRule(matchText: "GROCERY", displayName: "Groceries", matchType: .contains, isRecurring: true)
+        let disabled = MerchantRule(matchText: "COFFEE", displayName: "Cafe", matchType: .contains, isRecurring: true, isEnabled: false)
+        [nonMatching, disabled].forEach(context.insert)
+        try context.save()
+
+        let outcome = MerchantRuleBackfillService().apply(
+            rules: [nonMatching, disabled],
+            to: [txn],
+            referenceDate: now,
+            modelContext: context
+        )
+
+        XCTAssertEqual(outcome.updatedCount, 0)
+        XCTAssertFalse(txn.isRecurring)
+        XCTAssertEqual(txn.merchantName, "COFFEE HUT")
+    }
+
+    func testAttachAppliesARuleOnlyWhenItsMatchTextMatches() {
+        let txn = Transaction(merchantName: "SQ *BLUE BOTTLE", originalDescription: "SQ *BLUE BOTTLE", amount: 6, transactionDate: date(2026, 9, 1))
+        let match = MerchantRule(matchText: "BLUE BOTTLE", displayName: "Blue Bottle", matchType: .contains)
+        let noMatch = MerchantRule(matchText: "STARBUCKS", displayName: "Starbucks", matchType: .contains)
+        let service = MerchantRuleService()
+
+        XCTAssertFalse(service.attach(rule: noMatch, to: txn))
+        XCTAssertEqual(txn.merchantName, "SQ *BLUE BOTTLE")
+
+        XCTAssertTrue(service.attach(rule: match, to: txn))
+        XCTAssertEqual(txn.merchantName, "Blue Bottle")
+
+        XCTAssertEqual(
+            service.rulesMatching("SQ *BLUE BOTTLE", in: [match, noMatch]).map(\.matchText),
+            ["BLUE BOTTLE"]
+        )
+    }
+
     func testGuessAccountTypeReadsTheDominantSignOfDetectedAmounts() {
         // Mostly positive -> credit-card statement (purchases +, one payment -).
         XCTAssertEqual(
@@ -2893,6 +3217,19 @@ final class MyCostTests: XCTestCase {
         let ends = MerchantRule(matchText: "SUPERMARKET", displayName: "T&T Supermarket", matchType: .endsWith)
         XCTAssertNotNil(svc.bestRule(for: "T&T SUPERMARKET", originalDescription: "PURCHASE T&T SUPERMARKET", rules: [ends]))
         XCTAssertNil(svc.bestRule(for: "SUPERMARKET SWEEP TICKETS", originalDescription: "SUPERMARKET SWEEP TICKETS", rules: [ends]))
+    }
+
+    func testMerchantRulesAlphabetizeByNameCaseInsensitively() {
+        let rules = [
+            MerchantRule(matchText: "ZED", displayName: "zebra care", matchType: .contains),
+            MerchantRule(matchText: "APL", displayName: "Apple", matchType: .contains),
+            MerchantRule(matchText: "NET", displayName: "netflix", matchType: .contains),
+            MerchantRule(matchText: "AMZ", displayName: "Amazon", matchType: .contains)
+        ]
+        XCTAssertEqual(
+            rules.alphabetizedByName().map(\.normalizedMerchantName),
+            ["Amazon", "Apple", "netflix", "zebra care"]
+        )
     }
 
     func testMatchingIsCaseInsensitiveAndWhitespaceNormalized() {

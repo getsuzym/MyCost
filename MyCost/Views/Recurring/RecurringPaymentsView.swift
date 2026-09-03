@@ -9,10 +9,12 @@ struct RecurringPaymentsView: View {
     @Query(sort: \Category.sortOrder) private var categories: [Category]
 
     @State private var editingPayment: RecurringPayment?
+    @State private var paymentPendingDeletion: RecurringPayment?
     @State private var selectedSuggestion: RecurringPaymentSuggestion?
     @State private var monthAnchor = Date()
 
     private let suggestionService = RecurringPaymentSuggestionService()
+    private let recurringPaymentService = RecurringPaymentService()
     private let monthly = MonthlyTransactionsService()
 
     private var isCurrentMonth: Bool {
@@ -53,8 +55,39 @@ struct RecurringPaymentsView: View {
         )
     }
 
+    /// One unified row per recurring series (schedule): active first then paused,
+    /// each alphabetical, carrying this month's expected occurrences + whether
+    /// each has happened. This is the combined "expected / transactions /
+    /// payments" table.
+    private var seriesRows: [SeriesMonthRow] {
+        let occurrencesBySeries = Dictionary(grouping: monthExpectation.occurrences, by: \.seriesID)
+        func rows(_ payments: [RecurringPayment]) -> [SeriesMonthRow] {
+            payments
+                .map { payment in
+                    SeriesMonthRow(
+                        series: payment,
+                        occurrences: (occurrencesBySeries[payment.id] ?? []).sorted { $0.date < $1.date }
+                    )
+                }
+                .sorted { $0.series.merchantName.localizedCaseInsensitiveCompare($1.series.merchantName) == .orderedAscending }
+        }
+        return rows(recurringPayments.filter(\.isActive)) + rows(recurringPayments.filter { !$0.isActive })
+    }
+
+    /// Recurring transactions in the month that belong to no series (a one-off
+    /// the user flagged, not covered by any active schedule). They already
+    /// happened, so they show a green check.
+    private var looseRecurringTransactions: [Transaction] {
+        let seriesKeys = Set(recurringPayments.filter(\.isActive).map {
+            normalizedKey(accountName: $0.accountName, merchantName: $0.merchantName)
+        })
+        return monthRecurringTransactions.filter { transaction in
+            transaction.recurringPayment == nil
+                && !seriesKeys.contains(normalizedKey(accountName: transaction.accountName, merchantName: transaction.merchantName))
+        }
+    }
+
     var body: some View {
-        let monthTx = monthRecurringTransactions
         let expectation = monthExpectation
         let monthName = Formatters.month.string(from: monthAnchor)
         return List {
@@ -96,54 +129,69 @@ struct RecurringPaymentsView: View {
                 )
                 .accessibilityIdentifier("recurringMonth.occurrences")
             } header: {
-                Text("Recurring \u{2014} \(monthName)")
+                Text("This Month")
             }
 
             Section {
-                if expectation.occurrences.isEmpty {
-                    Text("No recurring payments scheduled in \(monthName).")
+                if seriesRows.isEmpty, looseRecurringTransactions.isEmpty {
+                    Text("No recurring payments. Create one from a suggestion below, or mark a transaction recurring.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(expectation.occurrences) { occurrence in
-                    ExpectedOccurrenceRow(occurrence: occurrence)
-                        .accessibilityIdentifier("recurringMonth.expectedRow")
-                }
-            } header: {
-                Text("Expected This Month")
-            } footer: {
-                Text("Only occurrences dated within \(monthName). A biweekly series lands twice or three times depending on the month.")
-            }
 
-            Section {
-                if monthTx.isEmpty {
-                    Text("No recurring transactions in \(monthName).")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(monthTx) { transaction in
-                    NavigationLink {
-                        TransactionDetailView(transaction: transaction)
+                ForEach(seriesRows) { row in
+                    Button {
+                        editingPayment = row.series
                     } label: {
-                        MonthRecurringRow(transaction: transaction)
+                        HStack {
+                            UnifiedSeriesRow(row: row, monthName: monthName)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .accessibilityIdentifier("recurringMonth.row")
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("recurring.seriesRow")
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            setActive(!row.series.isActive, for: row.series)
+                        } label: {
+                            Label(
+                                row.series.isActive ? "Pause" : "Resume",
+                                systemImage: row.series.isActive ? "pause.circle" : "play.circle"
+                            )
+                        }
+                        .tint(row.series.isActive ? .orange : .green)
+                        .accessibilityIdentifier("recurring.togglePause")
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            paymentPendingDeletion = row.series
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .accessibilityIdentifier("recurring.deleteSeries")
+                    }
+                }
+
+                if !looseRecurringTransactions.isEmpty {
+                    Text("Not linked to a series")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(looseRecurringTransactions) { transaction in
+                        NavigationLink {
+                            TransactionDetailView(transaction: transaction)
+                        } label: {
+                            UnifiedLooseTransactionRow(transaction: transaction)
+                        }
+                        .accessibilityIdentifier("recurring.looseRow")
+                    }
                 }
             } header: {
-                Text("Recurring Transactions \u{2014} \(monthName)")
-            }
-
-            Section("Recurring Payments") {
-                if recurringPayments.isEmpty {
-                    ContentUnavailableView("No recurring payments", systemImage: "repeat")
-                } else {
-                    ForEach(recurringPayments) { payment in
-                        Button {
-                            editingPayment = payment
-                        } label: {
-                            RecurringPaymentRow(payment: payment)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                Text("Recurring \u{2014} \(monthName)")
+            } footer: {
+                Text("One row per schedule. The dots show each expected payment this month; green means it has happened. Tap to edit the schedule, swipe to pause or delete it \u{2014} your transactions are never changed.")
             }
 
             Section("Suggestions") {
@@ -180,6 +228,40 @@ struct RecurringPaymentsView: View {
             }
         } message: {
             Text("This will mark the matching transactions as recurring and create a series.")
+        }
+        .confirmationDialog(
+            "Delete this recurring payment?",
+            isPresented: Binding(
+                get: { paymentPendingDeletion != nil },
+                set: { if !$0 { paymentPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let paymentPendingDeletion { deletePayment(paymentPendingDeletion) }
+                paymentPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { paymentPendingDeletion = nil }
+        } message: {
+            Text("Only the schedule is removed. Its transactions stay exactly as they are \u{2014} amounts, categories and recurring flags are untouched.")
+        }
+    }
+
+    private func setActive(_ isActive: Bool, for payment: RecurringPayment) {
+        do {
+            try recurringPaymentService.setActive(isActive, for: payment, modelContext: modelContext)
+            ToastCenter.shared.success(CRUDFeedback.updated("recurring payment"))
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("recurring payment"))
+        }
+    }
+
+    private func deletePayment(_ payment: RecurringPayment) {
+        do {
+            try recurringPaymentService.delete(payment, modelContext: modelContext)
+            ToastCenter.shared.success(CRUDFeedback.deleted("recurring payment"))
+        } catch {
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("recurring payment"))
         }
     }
 
@@ -223,20 +305,86 @@ struct RecurringPaymentsView: View {
     }
 }
 
-private struct ExpectedOccurrenceRow: View {
-    let occurrence: RecurringMonthExpectation.Occurrence
+/// One recurring series plus this month's expected occurrences (each carrying
+/// whether it has already happened).
+struct SeriesMonthRow: Identifiable {
+    let series: RecurringPayment
+    let occurrences: [RecurringMonthExpectation.Occurrence]
+
+    var id: UUID { series.id }
+    var expectedThisMonth: Decimal { occurrences.reduce(Decimal.zero) { $0 + $1.amount } }
+    var completed: Int { occurrences.filter(\.isMatched).count }
+}
+
+private struct UnifiedSeriesRow: View {
+    let row: SeriesMonthRow
+    let monthName: String
+
+    private var series: RecurringPayment { row.series }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(series.merchantName).font(.headline).lineLimit(1)
+                Spacer()
+                if series.isActive {
+                    Text(Formatters.currencyString(for: row.occurrences.isEmpty ? series.expectedAmount : row.expectedThisMonth))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Paused").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                }
+            }
+
+            HStack(spacing: 6) {
+                Text(series.schedule().label)
+                Text("·")
+                Text(series.accountName)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if row.occurrences.isEmpty {
+                Text(series.isActive ? "Not due in \(monthName)" : "Paused \u{2014} no payments expected")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                HStack(spacing: 12) {
+                    ForEach(row.occurrences) { occurrence in
+                        HStack(spacing: 4) {
+                            Image(systemName: occurrence.isMatched ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(occurrence.isMatched ? Color.green : Color.secondary)
+                                .accessibilityLabel(occurrence.isMatched ? "Paid" : "Due")
+                            Text(Formatters.shortDate.string(from: occurrence.date))
+                        }
+                        .font(.caption2)
+                    }
+                    Spacer(minLength: 0)
+                    Text("\(row.completed)/\(row.occurrences.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .opacity(series.isActive ? 1 : 0.6)
+    }
+}
+
+private struct UnifiedLooseTransactionRow: View {
+    let transaction: Transaction
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: occurrence.isMatched ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(occurrence.isMatched ? Color.green : Color.secondary)
-                .accessibilityLabel(occurrence.isMatched ? "Received" : "Expected")
-
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .accessibilityLabel("Paid")
             VStack(alignment: .leading, spacing: 2) {
-                Text(occurrence.merchantName).font(.body).lineLimit(1)
+                Text(transaction.merchantName).font(.body).lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(Formatters.shortDate.string(from: occurrence.date))
-                    if let categoryName = occurrence.categoryName {
+                    Text(Formatters.shortDate.string(from: transaction.transactionDate))
+                    Text("·")
+                    Text("One-off recurring")
+                    if let categoryName = transaction.category?.name {
                         Text("·")
                         Text(categoryName)
                     }
@@ -244,80 +392,12 @@ private struct ExpectedOccurrenceRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-
             Spacer()
-
-            Text(Formatters.currencyString(for: occurrence.amount))
+            Text(Formatters.currencyString(for: transaction.amount))
                 .font(.body.monospacedDigit())
-                .foregroundStyle(occurrence.isMatched ? .secondary : .primary)
-        }
-    }
-}
-
-private struct MonthRecurringRow: View {
-    let transaction: Transaction
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(transaction.merchantName).font(.body).lineLimit(1)
-                Spacer()
-                Text(Formatters.currencyString(for: transaction.amount))
-                    .font(.body.monospacedDigit())
-                    .foregroundStyle(transaction.amount < 0 ? .green : .primary)
-            }
-            HStack(spacing: 6) {
-                Text(Formatters.shortDate.string(from: transaction.transactionDate))
-                Text("·")
-                Text(transaction.category?.name ?? "Uncategorized")
-                if let frequency = transaction.recurringPayment?.frequency {
-                    Text("·")
-                    Text(frequency.label)
-                }
-                if transaction.isExcluded {
-                    Text("· Excluded").foregroundStyle(.orange)
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+                .foregroundStyle(transaction.amount < 0 ? .green : .primary)
         }
         .opacity(transaction.isExcluded ? 0.5 : 1)
-    }
-}
-
-private struct RecurringPaymentRow: View {
-    let payment: RecurringPayment
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(payment.merchantName)
-                    .font(.headline)
-                Spacer()
-                Text(payment.frequency.label)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(payment.accountName)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text(Formatters.currencyString(for: payment.expectedAmount))
-                Spacer()
-                if let nextExpectedDate = payment.nextExpectedDate {
-                    Text(Formatters.shortDate.string(from: nextExpectedDate))
-                }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-
-            if !payment.isActive {
-                Text("Paused")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }
 
@@ -376,11 +456,12 @@ private struct RecurringPaymentEditorView: View {
     @State private var amountText = ""
     @State private var frequency: RecurrenceFrequency = .monthly
     @State private var customIntervalDays = 30
+    @State private var monthInterval = 1
+    @State private var weekdayOrdinal = 1
+    @State private var weekday = 2
     @State private var selectedCategoryID: UUID?
     @State private var isActive = true
     @State private var validationMessage: String?
-
-    private let suggestionService = RecurringPaymentSuggestionService()
 
     private var visibleCategories: [Category] {
         categories.filter { $0.isActive || $0.id == selectedCategoryID }.alphabetizedByName()
@@ -396,15 +477,13 @@ private struct RecurringPaymentEditorView: View {
                 TextField("Expected Amount", text: $amountText)
                     .keyboardType(.decimalPad)
 
-                Picker("Frequency", selection: $frequency) {
-                    ForEach(RecurrenceFrequency.allCases.filter { $0 != .none }) { frequency in
-                        Text(frequency.label).tag(frequency)
-                    }
-                }
-
-                if frequency == .custom {
-                    Stepper("Every \(customIntervalDays) days", value: $customIntervalDays, in: 1...365)
-                }
+                RecurrenceRuleEditor(
+                    frequency: $frequency,
+                    customIntervalDays: $customIntervalDays,
+                    monthInterval: $monthInterval,
+                    weekdayOrdinal: $weekdayOrdinal,
+                    weekday: $weekday
+                )
 
                 Picker("Category", selection: $selectedCategoryID) {
                     Text("No category").tag(UUID?.none)
@@ -444,6 +523,9 @@ private struct RecurringPaymentEditorView: View {
         amountText = NSDecimalNumber(decimal: payment.expectedAmount).stringValue
         frequency = payment.frequency
         customIntervalDays = payment.customIntervalDays
+        monthInterval = max(1, payment.monthInterval)
+        weekdayOrdinal = payment.weekdayOrdinal == 0 ? 1 : payment.weekdayOrdinal
+        weekday = (1...7).contains(payment.weekday) ? payment.weekday : 2
         selectedCategoryID = payment.category?.id
         isActive = payment.isActive
     }
@@ -465,16 +547,21 @@ private struct RecurringPaymentEditorView: View {
         payment.expectedAmount = expectedAmount
         payment.frequency = frequency
         payment.customIntervalDays = customIntervalDays
-        payment.nextExpectedDate = payment.transactions
-            .map(\.transactionDate)
-            .max()
-            .flatMap {
-                suggestionService.nextExpectedDate(
-                    after: $0,
-                    frequency: frequency,
-                    customIntervalDays: customIntervalDays
-                )
-            }
+        payment.monthInterval = monthInterval
+        payment.weekdayOrdinal = weekdayOrdinal
+        payment.weekday = weekday
+
+        let schedule = RecurrenceSchedule(
+            frequency: frequency,
+            anchorDate: payment.occurrenceAnchor,
+            customIntervalDays: customIntervalDays,
+            monthInterval: monthInterval,
+            weekdayOrdinal: weekdayOrdinal,
+            weekday: weekday
+        )
+        let lastPaid = payment.transactions.map(\.transactionDate).max()
+        payment.nextExpectedDate = schedule.nextOccurrence(after: lastPaid ?? Date())
+
         payment.category = categories.first { $0.id == selectedCategoryID }
         payment.isActive = isActive
         payment.updatedAt = .now

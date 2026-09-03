@@ -22,18 +22,11 @@ struct MoreView: View {
 
             Section("Manage") {
                 NavigationLink {
-                    CategoryManagementView()
+                    TransactionHistoryView()
                 } label: {
-                    Label("Categories", systemImage: "folder")
+                    Label("All Transactions", systemImage: "list.bullet")
                 }
-                .accessibilityIdentifier("more.categories")
-
-                NavigationLink {
-                    MerchantRulesView()
-                } label: {
-                    Label("Merchant Rules", systemImage: "wand.and.stars")
-                }
-                .accessibilityIdentifier("more.merchantRules")
+                .accessibilityIdentifier("more.transactions")
 
                 NavigationLink {
                     AccountsView()

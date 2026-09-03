@@ -290,19 +290,52 @@ struct MerchantRuleService {
     func applyRuleToExistingTransactions(rule: MerchantRule, transactions: [Transaction]) {
         guard rule.isEnabled else { return }
         for transaction in transactions {
-            guard bestRule(
-                for: transaction.merchantName,
-                originalDescription: transaction.originalDescription,
-                rules: [rule]
-            )?.id == rule.id else { continue }
-            transaction.merchantName = rule.displayName
-            if let category = rule.category {
-                transaction.category = category
-            }
-            if rule.isRecurring {
-                transaction.isRecurring = true
-            }
-            transaction.updatedAt = .now
+            _ = attach(rule: rule, to: transaction, requireMatch: true)
+        }
+    }
+
+    /// Attach one specific rule to one transaction (the "pick an existing rule"
+    /// flow). When `requireMatch` is true the rule's `matchText` must actually
+    /// match the transaction (name or original description) or nothing changes.
+    /// Returns whether the rule was applied.
+    @MainActor
+    @discardableResult
+    func attach(rule: MerchantRule, to transaction: Transaction, requireMatch: Bool = true) -> Bool {
+        if requireMatch {
+            guard matches(
+                rule,
+                merchantName: transaction.merchantName,
+                originalDescription: transaction.originalDescription
+            ) else { return false }
+        }
+        transaction.merchantName = rule.displayName
+        if let category = rule.category {
+            transaction.category = category
+        }
+        // Recurring rules mark the transaction recurring; never clear the flag.
+        if rule.isRecurring {
+            transaction.isRecurring = true
+        }
+        transaction.updatedAt = .now
+        return true
+    }
+
+    /// Enabled rules whose `matchText` matches `description` — the candidates for
+    /// "attach an existing rule" to that transaction/draft.
+    func rulesMatching(_ description: String, in rules: [MerchantRule]) -> [MerchantRule] {
+        rules.filter { rule in
+            rule.isEnabled && matches(rule, merchantName: description, originalDescription: description)
+        }
+    }
+}
+
+extension Sequence where Element == MerchantRule {
+    /// Localized, case-insensitive alphabetical order by normalized merchant
+    /// name — the browsing order for the Merchant Rules list and the
+    /// "attach existing rule" picker. Conflict resolution still uses `priority`.
+    func alphabetizedByName() -> [MerchantRule] {
+        sorted {
+            $0.normalizedMerchantName.localizedCaseInsensitiveCompare($1.normalizedMerchantName) == .orderedAscending
         }
     }
 }

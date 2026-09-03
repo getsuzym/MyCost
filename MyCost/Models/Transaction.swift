@@ -31,8 +31,27 @@ enum RecurrenceFrequency: String, Codable, CaseIterable, Identifiable {
     case quarterly
     case yearly
     case custom
+    /// Every N months, phased from the series anchor (N in `monthInterval`):
+    /// 2 = bi-monthly, 6 = semi-annual, 18, …
+    case everyNMonths
+    /// The Nth weekday of every month (`weekdayOrdinal` 1…5 or -1 = last,
+    /// `weekday` 1 = Sun … 7 = Sat) — e.g. "first Monday of the month".
+    case nthWeekday
+    /// The Nth business day of every month (`weekdayOrdinal` 1…5 or -1 = last;
+    /// weekends skipped, public holidays not modelled) — e.g. "first business
+    /// day of the month".
+    case nthBusinessDay
 
     var id: String { rawValue }
+
+    /// Frequencies that need extra scheduling parameters and are configured with
+    /// dedicated controls rather than a bare period.
+    var isAdvanced: Bool {
+        switch self {
+        case .everyNMonths, .nthWeekday, .nthBusinessDay: true
+        default: false
+        }
+    }
 
     var label: String {
         switch self {
@@ -42,7 +61,10 @@ enum RecurrenceFrequency: String, Codable, CaseIterable, Identifiable {
         case .monthly: "Monthly"
         case .quarterly: "Quarterly"
         case .yearly: "Yearly"
-        case .custom: "Custom"
+        case .custom: "Custom (days)"
+        case .everyNMonths: "Every N months"
+        case .nthWeekday: "Nth weekday of month"
+        case .nthBusinessDay: "Nth business day of month"
         }
     }
 }
@@ -53,16 +75,18 @@ extension RecurrenceFrequency {
         case .none: 0
         case .weekly: 7
         case .biweekly: 14
-        case .monthly: 30
+        case .monthly, .everyNMonths, .nthWeekday, .nthBusinessDay: 30
         case .quarterly: 91
         case .yearly: 365
         case .custom: 30
         }
     }
 
+    /// Fixed-period stepping. Advanced frequencies (`isAdvanced`) return `nil`
+    /// here — `RecurrenceSchedule` generates their dates directly.
     func nextDate(after date: Date, calendar: Calendar = Calendar(identifier: .gregorian), customIntervalDays: Int = 30) -> Date? {
         switch self {
-        case .none:
+        case .none, .everyNMonths, .nthWeekday, .nthBusinessDay:
             nil
         case .weekly:
             calendar.date(byAdding: .day, value: 7, to: date)
@@ -81,7 +105,7 @@ extension RecurrenceFrequency {
 
     func previousDate(before date: Date, calendar: Calendar = Calendar(identifier: .gregorian), customIntervalDays: Int = 30) -> Date? {
         switch self {
-        case .none:
+        case .none, .everyNMonths, .nthWeekday, .nthBusinessDay:
             nil
         case .weekly:
             calendar.date(byAdding: .day, value: -7, to: date)
@@ -98,7 +122,7 @@ extension RecurrenceFrequency {
         }
     }
 
-    func monthlyMultiplier(customIntervalDays: Int = 30) -> Double {
+    func monthlyMultiplier(customIntervalDays: Int = 30, monthInterval: Int = 1) -> Double {
         switch self {
         case .none:
             0
@@ -106,12 +130,14 @@ extension RecurrenceFrequency {
             52.0 / 12.0
         case .biweekly:
             26.0 / 12.0
-        case .monthly:
+        case .monthly, .nthWeekday, .nthBusinessDay:
             1
         case .quarterly:
             1.0 / 3.0
         case .yearly:
             1.0 / 12.0
+        case .everyNMonths:
+            1.0 / Double(max(1, monthInterval))
         case .custom:
             30.4375 / Double(max(1, customIntervalDays))
         }

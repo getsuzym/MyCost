@@ -4,18 +4,34 @@ import SwiftUI
 struct MerchantRulesView: View {
     @Environment(\.modelContext) private var modelContext
 
-    @Query(sort: \MerchantRule.priority, order: .reverse) private var merchantRules: [MerchantRule]
+    @Query private var merchantRules: [MerchantRule]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
 
     @State private var editingRule: MerchantRule?
     @State private var isAddingRule = false
+    @State private var searchText = ""
+
+    /// Alphabetical by normalized merchant name (priority still governs which
+    /// rule wins a conflict), filtered by the search field.
+    private var displayedRules: [MerchantRule] {
+        let sorted = merchantRules.alphabetizedByName()
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return sorted }
+        return sorted.filter { rule in
+            rule.normalizedMerchantName.localizedCaseInsensitiveContains(query)
+                || rule.matchText.localizedCaseInsensitiveContains(query)
+                || (rule.category?.name.localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
 
     var body: some View {
         List {
             if merchantRules.isEmpty {
                 ContentUnavailableView("No merchant rules", systemImage: "wand.and.stars")
+            } else if displayedRules.isEmpty {
+                ContentUnavailableView.search(text: searchText)
             } else {
-                ForEach(merchantRules) { rule in
+                ForEach(displayedRules) { rule in
                     Button {
                         editingRule = rule
                     } label: {
@@ -41,6 +57,7 @@ struct MerchantRulesView: View {
             }
         }
         .navigationTitle("Merchant Rules")
+        .searchable(text: $searchText, prompt: "Search rules")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -85,7 +102,7 @@ struct MerchantRulesView: View {
     }
 
     private func deleteRules(at offsets: IndexSet) {
-        let toDelete = merchantRules.elements(at: offsets)
+        let toDelete = displayedRules.elements(at: offsets)
         guard !toDelete.isEmpty else { return }
         toDelete.forEach(modelContext.delete)
         do {

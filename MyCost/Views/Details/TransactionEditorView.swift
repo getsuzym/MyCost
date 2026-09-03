@@ -14,6 +14,7 @@ struct TransactionEditorView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
     @Query(sort: \Account.name) private var accounts: [Account]
+    @Query private var recurringPayments: [RecurringPayment]
 
     let mode: TransactionEditorMode
     /// For `.add`: the date the new transaction should start on (e.g. the month
@@ -34,6 +35,9 @@ struct TransactionEditorView: View {
     @State private var isRecurring = false
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
     @State private var customIntervalDays = 30
+    @State private var monthInterval = 1
+    @State private var weekdayOrdinal = 1
+    @State private var weekday = 2
     @State private var markFutureRecurring = false
     @State private var note = ""
     @State private var countsAsSpending = true
@@ -47,11 +51,11 @@ struct TransactionEditorView: View {
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
     @State private var pendingMerchantLearning: MerchantLearningPrompt?
+    @State private var isAttachingRule = false
 
     private let duplicateMatchingService = DuplicateMatchingService()
     private let merchantRuleService = MerchantRuleService()
     private let accountService = AccountService()
-    private let recurringSuggestionService = RecurringPaymentSuggestionService()
     private let normalizer = TransactionNormalizer()
 
     /// Live account-type-aware interpretation of the entered amount.
@@ -155,16 +159,13 @@ struct TransactionEditorView: View {
                 Toggle("Recurring", isOn: $isRecurring)
                     .accessibilityIdentifier("transactionEditor.recurring")
                 if isRecurring {
-                    Picker("Frequency", selection: $recurrenceFrequency) {
-                        ForEach(RecurrenceFrequency.allCases.filter { $0 != .none }) { frequency in
-                            Text(frequency.label).tag(frequency)
-                        }
-                    }
-
-                    if recurrenceFrequency == .custom {
-                        Stepper("Every \(customIntervalDays) days", value: $customIntervalDays, in: 1...365)
-                            .accessibilityIdentifier("transactionEditor.customIntervalDays")
-                    }
+                    RecurrenceRuleEditor(
+                        frequency: $recurrenceFrequency,
+                        customIntervalDays: $customIntervalDays,
+                        monthInterval: $monthInterval,
+                        weekdayOrdinal: $weekdayOrdinal,
+                        weekday: $weekday
+                    )
 
                     Toggle("Mark future transactions from this merchant as recurring", isOn: $markFutureRecurring)
                         .font(.callout)
@@ -174,6 +175,20 @@ struct TransactionEditorView: View {
                 Text("Tracking")
             } footer: {
                 Text("Any transaction can be recurring — rent, mortgage, insurance, utilities, subscriptions — independent of its category.")
+            }
+
+            Section {
+                Button {
+                    isAttachingRule = true
+                } label: {
+                    Label("Attach an Existing Rule", systemImage: "link")
+                }
+                .disabled(merchantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || merchantRules.isEmpty)
+                .accessibilityIdentifier("transactionEditor.attachRule")
+            } header: {
+                Text("Merchant Rule")
+            } footer: {
+                Text("Apply one of your saved rules (including recurring ones) to this transaction. Only rules whose match text matches are offered.")
             }
 
             Section("Note") {
@@ -253,6 +268,29 @@ struct TransactionEditorView: View {
             }
         }
         .onAppear(perform: loadInitialValues)
+        .sheet(isPresented: $isAttachingRule) {
+            NavigationStack {
+                AttachExistingRuleView(
+                    candidateText: merchantName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    rules: merchantRules,
+                    onAttach: attachRule
+                )
+            }
+        }
+    }
+
+    /// Apply a hand-picked rule to the editor's fields; the normal Save flow
+    /// then persists it (and creates the series if the rule is recurring).
+    private func attachRule(_ rule: MerchantRule) {
+        merchantName = rule.displayName
+        if let categoryID = rule.category?.id {
+            selectedCategoryID = categoryID
+        }
+        if rule.isRecurring {
+            isRecurring = true
+            recurrenceFrequency = rule.recurringFrequency
+        }
+        ToastCenter.shared.success("Rule \u{201C}\(rule.normalizedMerchantName)\u{201D} attached")
     }
 
     private func loadInitialValues() {
@@ -277,6 +315,15 @@ struct TransactionEditorView: View {
         isRecurring = transaction.isRecurring
         recurrenceFrequency = transaction.recurringPayment?.frequency ?? .monthly
         customIntervalDays = transaction.recurringPayment?.customIntervalDays ?? 30
+        monthInterval = max(1, transaction.recurringPayment?.monthInterval ?? 1)
+        weekdayOrdinal = {
+            let stored = transaction.recurringPayment?.weekdayOrdinal ?? 1
+            return stored == 0 ? 1 : stored
+        }()
+        weekday = {
+            let stored = transaction.recurringPayment?.weekday ?? 2
+            return (1...7).contains(stored) ? stored : 2
+        }()
         note = transaction.note
         countsAsSpending = transaction.countsAsSpending
         // Treat an existing row's stored choice as user-set so we don't nag.
@@ -341,6 +388,9 @@ struct TransactionEditorView: View {
                 isRecurring: isRecurring,
                 recurrenceFrequency: recurrenceFrequency,
                 customIntervalDays: customIntervalDays,
+                monthInterval: monthInterval,
+                weekdayOrdinal: weekdayOrdinal,
+                weekday: weekday,
                 note: note
             )
             let incoming = DuplicateTransactionSnapshot(
@@ -385,7 +435,10 @@ struct TransactionEditorView: View {
                 for: transaction,
                 category: selectedCategory,
                 frequency: recurrenceFrequency,
-                customIntervalDays: customIntervalDays
+                customIntervalDays: customIntervalDays,
+                monthInterval: monthInterval,
+                weekdayOrdinal: weekdayOrdinal,
+                weekday: weekday
             )
 
             if originalMerchantName != trimmedMerchantName || originalCategoryID != selectedCategory?.id {
@@ -400,7 +453,7 @@ struct TransactionEditorView: View {
 
         let action: CRUDFeedback.Action = { if case .add = mode { return .add } else { return .update } }()
 
-        learnRecurringRuleIfRequested()
+        let didLearnRecurringRule = learnRecurringRuleIfRequested()
 
         do {
             try modelContext.save()
@@ -408,6 +461,18 @@ struct TransactionEditorView: View {
             validationMessage = "Save failed: \(error.localizedDescription)"
             ToastCenter.shared.show(CRUDFeedback.result(action, "transaction", persisted: false))
             return
+        }
+
+        if didLearnRecurringRule {
+            // `@Query merchantRules` hasn't picked up the rule just inserted, so
+            // re-fetch before backfilling the last 3 months.
+            let freshRules = (try? modelContext.fetch(FetchDescriptor<MerchantRule>())) ?? merchantRules
+            MerchantRuleBackfillService().apply(
+                rules: freshRules,
+                to: transactions,
+                recurringPayments: recurringPayments,
+                modelContext: modelContext
+            )
         }
 
         // A follow-up prompt (remember merchant rule) is still open — the toast
@@ -467,7 +532,10 @@ struct TransactionEditorView: View {
             for: transaction,
             category: selectedCategory,
             frequency: draft.recurrenceFrequency,
-            customIntervalDays: draft.customIntervalDays
+            customIntervalDays: draft.customIntervalDays,
+            monthInterval: draft.monthInterval,
+            weekdayOrdinal: draft.weekdayOrdinal,
+            weekday: draft.weekday
         )
     }
 
@@ -475,7 +543,10 @@ struct TransactionEditorView: View {
         for transaction: Transaction,
         category: Category?,
         frequency: RecurrenceFrequency,
-        customIntervalDays: Int
+        customIntervalDays: Int,
+        monthInterval: Int,
+        weekdayOrdinal: Int,
+        weekday: Int
     ) {
         guard transaction.isRecurring else {
             transaction.recurringPayment = nil
@@ -488,11 +559,9 @@ struct TransactionEditorView: View {
             expectedAmount: transaction.amount,
             frequency: frequency,
             customIntervalDays: customIntervalDays,
-            nextExpectedDate: recurringSuggestionService.nextExpectedDate(
-                after: transaction.transactionDate,
-                frequency: frequency,
-                customIntervalDays: customIntervalDays
-            ),
+            monthInterval: monthInterval,
+            weekdayOrdinal: weekdayOrdinal,
+            weekday: weekday,
             category: category
         )
 
@@ -501,11 +570,18 @@ struct TransactionEditorView: View {
         recurringPayment.expectedAmount = transaction.amount
         recurringPayment.frequency = frequency
         recurringPayment.customIntervalDays = customIntervalDays
-        recurringPayment.nextExpectedDate = recurringSuggestionService.nextExpectedDate(
-            after: transaction.transactionDate,
+        recurringPayment.monthInterval = monthInterval
+        recurringPayment.weekdayOrdinal = weekdayOrdinal
+        recurringPayment.weekday = weekday
+        let schedule = RecurrenceSchedule(
             frequency: frequency,
-            customIntervalDays: customIntervalDays
+            anchorDate: transaction.transactionDate,
+            customIntervalDays: customIntervalDays,
+            monthInterval: monthInterval,
+            weekdayOrdinal: weekdayOrdinal,
+            weekday: weekday
         )
+        recurringPayment.nextExpectedDate = schedule.nextOccurrence(after: transaction.transactionDate)
         recurringPayment.category = category
         recurringPayment.updatedAt = .now
 
@@ -517,10 +593,12 @@ struct TransactionEditorView: View {
 
     /// "Mark future transactions from this merchant as recurring" → a Contains
     /// rule keyed on the merchant name that also carries `isRecurring`.
-    private func learnRecurringRuleIfRequested() {
-        guard markFutureRecurring, isRecurring else { return }
+    /// `didLearnRecurringRule` tells `save()` to backfill the last 3 months.
+    @discardableResult
+    private func learnRecurringRuleIfRequested() -> Bool {
+        guard markFutureRecurring, isRecurring else { return false }
         let trimmedMerchant = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedMerchant.isEmpty else { return }
+        guard !trimmedMerchant.isEmpty else { return false }
         merchantRuleService.learnRule(
             matchText: trimmedMerchant,
             displayName: trimmedMerchant,
@@ -532,6 +610,7 @@ struct TransactionEditorView: View {
             modelContext: modelContext,
             saveImmediately: false
         )
+        return true
     }
 
     private func rememberPendingMerchantChange(matchType: MerchantRuleMatchType) {
@@ -576,6 +655,9 @@ private struct ManualTransactionDraft {
     let isRecurring: Bool
     let recurrenceFrequency: RecurrenceFrequency
     let customIntervalDays: Int
+    let monthInterval: Int
+    let weekdayOrdinal: Int
+    let weekday: Int
     let note: String
 }
 
