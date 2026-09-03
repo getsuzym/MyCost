@@ -1,22 +1,35 @@
 import SwiftUI
 
 /// Pick one of your existing merchant rules to apply to the transaction in
-/// hand. Only rules whose match text actually matches the transaction can be
-/// attached; the rest are shown greyed-out for reference.
+/// hand. Rules whose match text matches (the merchant name **or** the bank's
+/// original description) are listed first and attach with one tap; the rest can
+/// still be force-attached after a confirmation, for when a name was cleaned up
+/// so much that the rule text no longer appears in it.
 struct AttachExistingRuleView: View {
-    /// The text the rule is checked against (merchant name / original description).
-    let candidateText: String
+    let merchantName: String
+    /// The bank's raw description. Rules are often learned from this, so it's
+    /// checked even when the visible merchant name has been hand-edited.
+    let originalDescription: String
     let rules: [MerchantRule]
     let onAttach: (MerchantRule) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var forceAttachCandidate: MerchantRule?
     private let service = MerchantRuleService()
 
-    private var matching: [MerchantRule] {
-        service.rulesMatching(candidateText, in: rules).alphabetizedByName()
+    private var showsOriginalDescription: Bool {
+        !originalDescription.isEmpty && originalDescription != merchantName
     }
 
-    private var nonMatching: [MerchantRule] {
+    private var matching: [MerchantRule] {
+        service.rulesMatching(
+            merchantName: merchantName,
+            originalDescription: originalDescription.isEmpty ? merchantName : originalDescription,
+            in: rules
+        ).alphabetizedByName()
+    }
+
+    private var others: [MerchantRule] {
         let matchIDs = Set(matching.map(\.id))
         return rules.filter { $0.isEnabled && !matchIDs.contains($0.id) }.alphabetizedByName()
     }
@@ -24,16 +37,21 @@ struct AttachExistingRuleView: View {
     var body: some View {
         List {
             Section {
-                Text("\u{201C}\(candidateText)\u{201D}")
+                Text("\u{201C}\(merchantName)\u{201D}")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if showsOriginalDescription {
+                    Text("Bank text: \u{201C}\(originalDescription)\u{201D}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
                 Text("Transaction text")
             }
 
             Section {
                 if matching.isEmpty {
-                    Text("No existing rule matches this text.")
+                    Text("No rule's match text matches this transaction. Pick one below to attach it anyway.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(matching) { rule in
@@ -49,16 +67,20 @@ struct AttachExistingRuleView: View {
                 Text("Matching rules")
             }
 
-            if !nonMatching.isEmpty {
+            if !others.isEmpty {
                 Section {
-                    ForEach(nonMatching) { rule in
-                        RuleSummaryRow(rule: rule)
-                            .foregroundStyle(.secondary)
+                    ForEach(others) { rule in
+                        Button {
+                            forceAttachCandidate = rule
+                        } label: {
+                            RuleSummaryRow(rule: rule)
+                        }
+                        .accessibilityIdentifier("attachRule.other")
                     }
                 } header: {
-                    Text("Doesn\u{2019}t match")
+                    Text("Other rules")
                 } footer: {
-                    Text("A rule can only be attached when its match text matches this transaction.")
+                    Text("These rules\u{2019} match text isn\u{2019}t found in this transaction. Tap one to attach it anyway \u{2014} useful when you\u{2019}ve renamed the transaction.")
                 }
             }
         }
@@ -67,6 +89,27 @@ struct AttachExistingRuleView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
+            }
+        }
+        .confirmationDialog(
+            "Attach this rule anyway?",
+            isPresented: Binding(
+                get: { forceAttachCandidate != nil },
+                set: { if !$0 { forceAttachCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Attach Rule") {
+                if let rule = forceAttachCandidate {
+                    onAttach(rule)
+                    forceAttachCandidate = nil
+                    dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) { forceAttachCandidate = nil }
+        } message: {
+            if let rule = forceAttachCandidate {
+                Text("\u{201C}\(rule.matchText)\u{201D} isn\u{2019}t found in this transaction, but the rule will still be applied to it.")
             }
         }
     }

@@ -320,12 +320,18 @@ struct MerchantRuleService {
         return true
     }
 
-    /// Enabled rules whose `matchText` matches `description` — the candidates for
-    /// "attach an existing rule" to that transaction/draft.
-    func rulesMatching(_ description: String, in rules: [MerchantRule]) -> [MerchantRule] {
+    /// Enabled rules whose `matchText` matches the transaction — the candidates
+    /// for "attach an existing rule". Checks **both** the (possibly hand-edited)
+    /// merchant name and the bank's original description, so a rule learned from
+    /// the raw bank text still matches after the name was cleaned up.
+    func rulesMatching(merchantName: String, originalDescription: String, in rules: [MerchantRule]) -> [MerchantRule] {
         rules.filter { rule in
-            rule.isEnabled && matches(rule, merchantName: description, originalDescription: description)
+            rule.isEnabled && matches(rule, merchantName: merchantName, originalDescription: originalDescription)
         }
+    }
+
+    func rulesMatching(_ description: String, in rules: [MerchantRule]) -> [MerchantRule] {
+        rulesMatching(merchantName: description, originalDescription: description, in: rules)
     }
 }
 

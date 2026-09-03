@@ -2914,6 +2914,34 @@ final class MyCostTests: XCTestCase {
         )
     }
 
+    func testRulesMatchingChecksTheOriginalDescriptionEvenAfterTheNameWasRenamed() {
+        let service = MerchantRuleService()
+        // The user cleaned the visible name; the bank's raw text still has the
+        // string the rule was built from.
+        let rule = MerchantRule(matchText: "BC HYDRO", displayName: "Hydro", matchType: .contains, isRecurring: true)
+        let unrelated = MerchantRule(matchText: "TELUS", displayName: "Telus", matchType: .contains)
+
+        // Only the merchant name -> no match.
+        XCTAssertTrue(service.rulesMatching("Hydro Bill", in: [rule, unrelated]).isEmpty)
+
+        // Name + original description -> the rule matches via the bank text.
+        XCTAssertEqual(
+            service.rulesMatching(
+                merchantName: "Hydro Bill",
+                originalDescription: "PRE-AUTH PYMT BC HYDRO VANCOUVER BC",
+                in: [rule, unrelated]
+            ).map(\.matchText),
+            ["BC HYDRO"]
+        )
+
+        // Force-attach still works for a rule that matches nothing.
+        let txn = Transaction(merchantName: "Hydro Bill", originalDescription: "Hydro Bill", amount: 88, transactionDate: date(2026, 9, 1))
+        XCTAssertFalse(service.attach(rule: rule, to: txn))                       // requireMatch: no
+        XCTAssertTrue(service.attach(rule: rule, to: txn, requireMatch: false))   // force
+        XCTAssertEqual(txn.merchantName, "Hydro")
+        XCTAssertTrue(txn.isRecurring)
+    }
+
     func testGuessAccountTypeReadsTheDominantSignOfDetectedAmounts() {
         // Mostly positive -> credit-card statement (purchases +, one payment -).
         XCTAssertEqual(

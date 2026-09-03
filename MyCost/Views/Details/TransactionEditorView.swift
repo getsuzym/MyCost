@@ -188,7 +188,7 @@ struct TransactionEditorView: View {
             } header: {
                 Text("Merchant Rule")
             } footer: {
-                Text("Apply one of your saved rules (including recurring ones) to this transaction. Only rules whose match text matches are offered.")
+                Text("Apply one of your saved rules (including recurring ones) to this transaction. Matching rules attach with one tap; you can also force-attach a rule whose text no longer matches after a rename.")
             }
 
             Section("Note") {
@@ -271,12 +271,21 @@ struct TransactionEditorView: View {
         .sheet(isPresented: $isAttachingRule) {
             NavigationStack {
                 AttachExistingRuleView(
-                    candidateText: merchantName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    merchantName: merchantName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    originalDescription: editingOriginalDescription,
                     rules: merchantRules,
                     onAttach: attachRule
                 )
             }
         }
+    }
+
+    /// The bank's raw description of the transaction being edited (empty when
+    /// adding). Rules learned from bank text still match against this even after
+    /// the merchant name has been hand-edited.
+    private var editingOriginalDescription: String {
+        if case .edit(let transaction) = mode { return transaction.originalDescription }
+        return ""
     }
 
     /// Apply a hand-picked rule to the editor's fields; the normal Save flow
