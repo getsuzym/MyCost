@@ -103,7 +103,7 @@ struct DashboardView: View {
 
             Section("Recurring") {
                 let recurringCount = monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
-                    .filter { $0.isRecurring && !$0.isExcluded && $0.countsAsSpending }.count
+                    .filter { $0.isRecurring && !$0.isExcluded && $0.contributesToSpending }.count
 
                 NavigationLink {
                     MonthTransactionsListView(month: monthAnchor, scope: .recurring)

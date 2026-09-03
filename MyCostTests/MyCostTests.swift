@@ -2514,6 +2514,30 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, visibleSum)
     }
 
+    func testRecurringRowConfidentlyZeroedByOldRulesStillCountsAfterReCheck() throws {
+        let housing = makeCategory("Housing", sortOrder: 0)
+        // Frozen at import as a *confident* non-spending row (old broad
+        // "pre-authorized payment" keyword): countsAsSpending=false,
+        // needsDirectionReview=false, direction=.credit.
+        let mortgage = Transaction(
+            merchantName: "Mortgage payment",
+            originalDescription: "PC MORTGAGE PRE-AUTHORIZED PAYMENT",
+            amount: -877.67, transactionDate: date(2026, 8, 21),
+            transactionDirection: .credit, accountType: .creditCard,
+            countsAsSpending: false, needsDirectionReview: false,
+            category: housing
+        )
+        mortgage.isRecurring = true
+        context.insert(mortgage)
+        try context.save()
+
+        // Re-checking the current (narrow) rules: no keyword → a negative on a
+        // card with no cue is now `needsReview` → the recurring mark rescues it.
+        XCTAssertTrue(mortgage.contributesToSpending)
+        XCTAssertEqual(mortgage.spendingAmount, abs(mortgage.amount))
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, abs(mortgage.amount))
+    }
+
     func testConfidentIncomeMarkedRecurringIsNotRescued() throws {
         let cat = makeCategory("Income", sortOrder: 0)
         let payroll = Transaction(

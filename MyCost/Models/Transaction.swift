@@ -233,15 +233,16 @@ final class Transaction {
 
     /// Whether this row is part of spending totals at all. The normalizer's
     /// count wins; otherwise a **recurring** row is rescued when the current
-    /// rules would count it, when it's a recurring credit/refund, or when its
-    /// sign was flagged uncertain at import. A hand override (`spendingCountOverridden`)
-    /// and a confidently-detected deposit / card payoff are never rescued.
+    /// rules would count it, when it's a recurring credit/refund, or when the
+    /// current rules find its sign ambiguous (`needsReview`). A hand override
+    /// (`spendingCountOverridden`) and a confidently-detected deposit / card
+    /// payoff are never rescued.
     var contributesToSpending: Bool {
         if countsAsSpending { return true }
         if spendingCountOverridden { return false }
         guard isRecurring else { return false }
         let n = currentNormalization
-        return n.countsAsSpending || n.normalizedAmount < 0 || needsDirectionReview
+        return n.countsAsSpending || n.normalizedAmount < 0 || n.needsReview
     }
 
     /// The value analytics should sum. Zero when the row doesn't contribute
