@@ -24,7 +24,11 @@ struct TransactionDetailView: View {
                 if transaction.isExcluded, !transaction.excludedReason.isEmpty {
                     LabeledContent("Reason", value: transaction.excludedReason)
                 }
-                LabeledContent("Recurring", value: transaction.isRecurring ? "Yes" : "No")
+                Toggle("Recurring", isOn: Binding(
+                    get: { transaction.isRecurring },
+                    set: { setRecurring($0) }
+                ))
+                .accessibilityIdentifier("transactionDetail.recurring")
                 if let recurringPayment = transaction.recurringPayment {
                     LabeledContent("Frequency", value: recurringPayment.frequency.label)
                 }
@@ -60,6 +64,20 @@ struct TransactionDetailView: View {
         .confirmationDialog("Delete this transaction?", isPresented: $isShowingDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive, action: deleteTransaction)
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func setRecurring(_ value: Bool) {
+        transaction.isRecurring = value
+        // Unmarking detaches the transaction from any generated series.
+        if !value { transaction.recurringPayment = nil }
+        transaction.updatedAt = .now
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success(CRUDFeedback.updated("transaction"))
+        } catch {
+            transaction.isRecurring = !value
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
         }
     }
 

@@ -2,12 +2,14 @@ import Combine
 import Foundation
 import UIKit
 
+/// The draft fields the Review UI highlights for attention. Pending/Posted was
+/// removed from the Review screen (it added no review value); `status` is still
+/// on the draft and the imported `Transaction` for duplicate detection.
 enum OCRReviewField {
     case account
     case date
     case merchant
     case amount
-    case status
 }
 
 enum DuplicateReviewDecision: String, CaseIterable, Identifiable {
@@ -26,6 +28,25 @@ enum DuplicateReviewDecision: String, CaseIterable, Identifiable {
     }
 }
 
+/// Why a draft has (or doesn't have) a category — drives the Review row's
+/// rule-status indicator so rows needing attention stand out.
+enum DraftCategorizationStatus: Equatable {
+    /// A user `MerchantRule` matched and set the category.
+    case ruleMatched
+    /// Has a category the user picked (or a local suggestion applied).
+    case categorized
+    /// No category yet — needs the user's attention.
+    case uncategorized
+
+    var label: String {
+        switch self {
+        case .ruleMatched: "Rule matched"
+        case .categorized: "Categorized"
+        case .uncategorized: "Needs a category"
+        }
+    }
+}
+
 struct OCRTransactionDraft: Identifiable, Equatable {
     let id: UUID
     let parsedMerchantName: String
@@ -40,13 +61,23 @@ struct OCRTransactionDraft: Identifiable, Equatable {
     var transactionDate: Date
     var merchantName: String
     var amountText: String
+    /// Bank pending/posted metadata — kept for duplicate detection and stored on
+    /// the imported `Transaction`, but no longer shown in the Review UI.
     var status: TransactionStatus
     var selectedCategoryID: UUID?
     var isSelected: Bool
+    /// User-controlled recurring flag for this transaction (any category).
+    var isRecurring: Bool
+    /// "Also mark future transactions from this merchant as recurring."
+    var markFutureRecurring: Bool
     var duplicateDecision: DuplicateReviewDecision
     var duplicateMatchID: UUID?
     var duplicateSummary: String?
     var shouldRememberMerchantRule: Bool
+    /// The `MerchantRule` that auto-set this draft's category, if any.
+    var appliedRuleID: UUID?
+    /// The user changed the category away from what a rule / suggestion set.
+    var didUserSetCategory: Bool
 
     init(candidate: TransactionCandidate, referenceDate: Date = .now) {
         id = candidate.id
@@ -63,10 +94,14 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         status = candidate.status == .pending ? .pending : .posted
         selectedCategoryID = nil
         isSelected = true
+        isRecurring = false
+        markFutureRecurring = false
         duplicateDecision = .review
         duplicateMatchID = nil
         duplicateSummary = nil
         shouldRememberMerchantRule = false
+        appliedRuleID = nil
+        didUserSetCategory = false
     }
 
     mutating func applyMerchantRule(_ application: MerchantRuleApplication) {
@@ -74,6 +109,16 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         if let category = application.category {
             selectedCategoryID = category.id
         }
+        appliedRuleID = application.ruleID
+        if application.isRecurring {
+            isRecurring = true
+        }
+    }
+
+    /// The rule-status indicator shown in the Review row.
+    var categorizationStatus: DraftCategorizationStatus {
+        if appliedRuleID != nil, !didUserSetCategory { return .ruleMatched }
+        return selectedCategoryID == nil ? .uncategorized : .categorized
     }
 
     var trimmedMerchantName: String {
@@ -112,9 +157,6 @@ struct OCRTransactionDraft: Identifiable, Equatable {
                 validationFlags.contains(.multipleAmounts) ||
                 validationFlags.contains(.ambiguousLayout) ||
                 confidence.amount < 0.8
-        case .status:
-            validationFlags.contains(.missingStatus) ||
-                confidence.status < 0.8
         }
     }
 
@@ -212,10 +254,16 @@ final class OCRTransactionReviewStore: ObservableObject {
         drafts.removeAll { $0.id == id }
     }
 
-    /// Applies a confirmed AI (or rule) categorization onto a draft and marks it
-    /// to be remembered as a `MerchantRule` when the batch is saved. The user
-    /// can still edit the fields afterwards — corrections are captured at save.
-    func applyCategorization(to id: UUID, merchantName: String, categoryID: UUID?) {
+    /// Applies a deterministic (rule or known-merchant) categorization onto a
+    /// draft. When `ruleID` is non-nil the draft is marked "Rule matched";
+    /// otherwise it's a manual/known-merchant categorization.
+    func applyCategorization(
+        to id: UUID,
+        merchantName: String,
+        categoryID: UUID?,
+        ruleID: UUID? = nil,
+        isRecurring: Bool = false
+    ) {
         guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -224,7 +272,23 @@ final class OCRTransactionReviewStore: ObservableObject {
         if let categoryID {
             drafts[index].selectedCategoryID = categoryID
         }
+        if let ruleID {
+            drafts[index].appliedRuleID = ruleID
+            drafts[index].didUserSetCategory = false
+        } else {
+            drafts[index].didUserSetCategory = true
+        }
+        if isRecurring {
+            drafts[index].isRecurring = true
+        }
         drafts[index].shouldRememberMerchantRule = true
+    }
+
+    /// Record that the user picked a category by hand (drives the rule-status
+    /// indicator: a rule-matched row becomes "Categorized" once overridden).
+    func markCategoryUserSet(id: UUID) {
+        guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
+        drafts[index].didUserSetCategory = true
     }
 
     func removeDrafts(ids: Set<UUID>) {

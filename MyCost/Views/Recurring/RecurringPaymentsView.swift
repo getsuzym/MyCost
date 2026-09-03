@@ -10,8 +10,27 @@ struct RecurringPaymentsView: View {
 
     @State private var editingPayment: RecurringPayment?
     @State private var selectedSuggestion: RecurringPaymentSuggestion?
+    @State private var monthAnchor = Date()
 
     private let suggestionService = RecurringPaymentSuggestionService()
+    private let monthly = MonthlyTransactionsService()
+
+    private var isCurrentMonth: Bool {
+        Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
+    }
+
+    /// Every transaction in the selected month flagged `isRecurring`, any
+    /// category, newest first.
+    private var monthRecurringTransactions: [Transaction] {
+        monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
+            .filter(\.isRecurring)
+    }
+
+    private var recurringMonthTotal: Decimal {
+        monthRecurringTransactions
+            .filter { !$0.isExcluded }
+            .reduce(Decimal.zero) { $0 + $1.spendingAmount }
+    }
 
     private var suggestions: [RecurringPaymentSuggestion] {
         let activeKeys = Set(recurringPayments.filter(\.isActive).map {
@@ -29,13 +48,56 @@ struct RecurringPaymentsView: View {
     }
 
     var body: some View {
-        List {
+        let monthTx = monthRecurringTransactions
+        return List {
             Section {
                 RecurringMetricRow(
                     title: "Expected Monthly",
                     value: Formatters.currencyString(for: expectedMonthlySpending),
                     systemImage: "calendar.badge.clock"
                 )
+            }
+
+            Section {
+                HStack {
+                    Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityIdentifier("recurringMonth.previous")
+                    Text(Formatters.month.string(from: monthAnchor))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                    Button { stepMonth(1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(isCurrentMonth)
+                        .accessibilityIdentifier("recurringMonth.next")
+                }
+                .buttonStyle(.borderless)
+
+                RecurringMetricRow(
+                    title: "Recurring This Month",
+                    value: Formatters.currencyString(for: recurringMonthTotal),
+                    systemImage: "repeat"
+                )
+                .accessibilityIdentifier("recurringMonth.total")
+                RecurringMetricRow(
+                    title: "Recurring Transactions",
+                    value: "\(monthTx.count)",
+                    systemImage: "number"
+                )
+                .accessibilityIdentifier("recurringMonth.count")
+
+                if monthTx.isEmpty {
+                    Text("No recurring transactions in \(Formatters.month.string(from: monthAnchor)).")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(monthTx) { transaction in
+                    NavigationLink {
+                        TransactionDetailView(transaction: transaction)
+                    } label: {
+                        MonthRecurringRow(transaction: transaction)
+                    }
+                    .accessibilityIdentifier("recurringMonth.row")
+                }
+            } header: {
+                Text("Recurring This Month")
             }
 
             Section("Recurring Payments") {
@@ -122,6 +184,42 @@ struct RecurringPaymentsView: View {
 
     private func normalizedKey(accountName: String?, merchantName: String) -> String {
         "\(accountName?.lowercased() ?? "")|\(MerchantRuleNormalizer.normalizedMerchantKey(for: merchantName))"
+    }
+
+    private func stepMonth(_ delta: Int) {
+        guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
+        monthAnchor = moved > Date() ? Date() : moved
+    }
+}
+
+private struct MonthRecurringRow: View {
+    let transaction: Transaction
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(transaction.merchantName).font(.body).lineLimit(1)
+                Spacer()
+                Text(Formatters.currencyString(for: transaction.amount))
+                    .font(.body.monospacedDigit())
+                    .foregroundStyle(transaction.amount < 0 ? .green : .primary)
+            }
+            HStack(spacing: 6) {
+                Text(Formatters.shortDate.string(from: transaction.transactionDate))
+                Text("·")
+                Text(transaction.category?.name ?? "Uncategorized")
+                if let frequency = transaction.recurringPayment?.frequency {
+                    Text("·")
+                    Text(frequency.label)
+                }
+                if transaction.isExcluded {
+                    Text("· Excluded").foregroundStyle(.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .opacity(transaction.isExcluded ? 0.5 : 1)
     }
 }
 
@@ -223,7 +321,7 @@ private struct RecurringPaymentEditorView: View {
     private let suggestionService = RecurringPaymentSuggestionService()
 
     private var visibleCategories: [Category] {
-        categories.filter { $0.isActive || $0.id == selectedCategoryID }
+        categories.filter { $0.isActive || $0.id == selectedCategoryID }.alphabetizedByName()
     }
 
     var body: some View {

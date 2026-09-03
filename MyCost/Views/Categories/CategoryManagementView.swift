@@ -16,6 +16,12 @@ struct CategoryManagementView: View {
 
     private let service = CategoryService()
 
+    /// Rows are shown in localized, case-insensitive alphabetical order — not
+    /// SwiftData fetch / creation order.
+    private var sortedCategories: [Category] {
+        categories.alphabetizedByName()
+    }
+
     var body: some View {
         List {
             if let errorMessage {
@@ -25,7 +31,7 @@ struct CategoryManagementView: View {
             }
 
             Section {
-                ForEach(categories) { category in
+                ForEach(sortedCategories) { category in
                     Button {
                         editingCategory = category
                     } label: {
@@ -51,16 +57,14 @@ struct CategoryManagementView: View {
                         }
                     }
                 }
-                .onMove(perform: move)
             } header: {
                 Text("Categories")
             } footer: {
-                Text("Hidden categories stay on existing transactions but aren't offered when categorizing. Uncategorized is always available and can't be removed.")
+                Text("Shown alphabetically. Hidden categories stay on existing transactions but aren't offered when categorizing. Uncategorized is always available and can't be removed.")
             }
         }
         .navigationTitle("Categories")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) { EditButton() }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     isAddingCategory = true
@@ -145,13 +149,6 @@ struct CategoryManagementView: View {
         }
     }
 
-    private func move(from offsets: IndexSet, to destination: Int) {
-        var ordered = categories
-        // Guard against stale offsets if the @Query changed under the gesture.
-        guard offsets.allSatisfy({ ordered.indices.contains($0) }), (0...ordered.count).contains(destination) else { return }
-        ordered.move(fromOffsets: offsets, toOffset: destination)
-        service.reorder(ordered, modelContext: modelContext)
-    }
 }
 
 private struct CategoryRow: View {
@@ -202,7 +199,7 @@ private struct CategoryDeletionView: View {
     @State private var selectedTargetID: UUID?
 
     private var reassignChoices: [Category] {
-        otherCategories.filter { $0.isActive || $0.isFallback }
+        otherCategories.filter { $0.isActive || $0.isFallback }.alphabetizedByName()
     }
 
     var body: some View {

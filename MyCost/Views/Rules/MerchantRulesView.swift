@@ -150,6 +150,8 @@ private struct MerchantRuleEditorView: View {
     @State private var selectedCategoryID: UUID?
     @State private var priority = 0
     @State private var isEnabled = true
+    @State private var isRecurring = false
+    @State private var recurringFrequency: RecurrenceFrequency = .monthly
     @State private var exampleDescription = ""
     @State private var validationMessage: String?
 
@@ -158,7 +160,7 @@ private struct MerchantRuleEditorView: View {
     private var title: String { rule == nil ? "Add Rule" : "Edit Rule" }
 
     private var visibleCategories: [Category] {
-        categories.filter { $0.isActive || $0.id == selectedCategoryID }
+        categories.filter { $0.isActive || $0.id == selectedCategoryID }.alphabetizedByName()
     }
 
     private var previewMatches: Bool {
@@ -209,6 +211,17 @@ private struct MerchantRuleEditorView: View {
                     }
                 }
                 .accessibilityIdentifier("merchantRule.category")
+
+                Toggle("Also mark matching transactions recurring", isOn: $isRecurring)
+                    .accessibilityIdentifier("merchantRule.recurring")
+                if isRecurring {
+                    Picker("Frequency", selection: $recurringFrequency) {
+                        ForEach(RecurrenceFrequency.allCases.filter { $0 != .none }) { frequency in
+                            Text(frequency.label).tag(frequency)
+                        }
+                    }
+                    .accessibilityIdentifier("merchantRule.frequency")
+                }
             }
 
             Section("Preview") {
@@ -255,6 +268,8 @@ private struct MerchantRuleEditorView: View {
         selectedCategoryID = rule.category?.id
         priority = rule.priority
         isEnabled = rule.isActive
+        isRecurring = rule.isRecurring
+        recurringFrequency = rule.recurringFrequency
     }
 
     private func save() {
@@ -282,6 +297,8 @@ private struct MerchantRuleEditorView: View {
                 displayName: trimmedDisplayName,
                 matchType: matchType,
                 priority: priority,
+                isRecurring: isRecurring,
+                recurringFrequency: recurringFrequency,
                 category: category,
                 isEnabled: isEnabled
             )
@@ -291,6 +308,8 @@ private struct MerchantRuleEditorView: View {
                 displayName: trimmedDisplayName,
                 matchType: matchType,
                 priority: priority,
+                isRecurring: isRecurring,
+                recurringFrequency: recurringFrequency,
                 isEnabled: isEnabled,
                 category: category
             )

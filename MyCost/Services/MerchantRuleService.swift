@@ -5,6 +5,10 @@ struct MerchantRuleApplication {
     let displayName: String
     let category: Category?
     let rule: MerchantRule
+
+    var isRecurring: Bool { rule.isRecurring }
+    var recurringFrequency: RecurrenceFrequency { rule.recurringFrequency }
+    var ruleID: UUID { rule.id }
 }
 
 enum MerchantRuleNormalizer {
@@ -160,6 +164,11 @@ struct MerchantRuleService {
         if let category = application.category {
             transaction.category = category
         }
+        // Recurring rules mark the transaction recurring; a non-recurring rule
+        // never clears an existing recurring flag.
+        if application.isRecurring {
+            transaction.isRecurring = true
+        }
         transaction.updatedAt = .now
     }
 
@@ -172,6 +181,8 @@ struct MerchantRuleService {
         category: Category?,
         matchType: MerchantRuleMatchType = .contains,
         priority: Int = 0,
+        isRecurring: Bool = false,
+        recurringFrequency: RecurrenceFrequency = .monthly,
         modelContext: ModelContext,
         saveImmediately: Bool = true
     ) {
@@ -181,6 +192,8 @@ struct MerchantRuleService {
             category: category,
             matchType: matchType,
             priority: priority,
+            isRecurring: isRecurring,
+            recurringFrequency: recurringFrequency,
             existingRules: [],
             modelContext: modelContext,
             saveImmediately: saveImmediately
@@ -198,6 +211,8 @@ struct MerchantRuleService {
         category: Category?,
         matchType: MerchantRuleMatchType = .contains,
         priority: Int = 0,
+        isRecurring: Bool = false,
+        recurringFrequency: RecurrenceFrequency = .monthly,
         existingRules: [MerchantRule],
         modelContext: ModelContext,
         saveImmediately: Bool = true
@@ -221,6 +236,11 @@ struct MerchantRuleService {
             match.matchType = matchType
             if priority != 0 { match.priority = priority }
             if let category { match.category = category }
+            // Turning recurring on sticks; we don't silently turn it off.
+            if isRecurring {
+                match.isRecurring = true
+                match.recurringFrequency = recurringFrequency
+            }
             match.isEnabled = true
             match.updatedAt = .now
             if saveImmediately { try? modelContext.save() }
@@ -233,6 +253,8 @@ struct MerchantRuleService {
             displayName: trimmedDisplayName,
             matchType: matchType,
             priority: priority,
+            isRecurring: isRecurring,
+            recurringFrequency: recurringFrequency,
             category: category
         )
         modelContext.insert(rule)
@@ -247,6 +269,8 @@ struct MerchantRuleService {
         displayName: String,
         matchType: MerchantRuleMatchType,
         priority: Int,
+        isRecurring: Bool,
+        recurringFrequency: RecurrenceFrequency,
         category: Category?,
         isEnabled: Bool
     ) {
@@ -255,6 +279,8 @@ struct MerchantRuleService {
         rule.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         rule.matchType = matchType
         rule.priority = priority
+        rule.isRecurring = isRecurring
+        rule.recurringFrequency = recurringFrequency
         rule.category = category
         rule.isEnabled = isEnabled
         rule.updatedAt = .now
@@ -272,6 +298,9 @@ struct MerchantRuleService {
             transaction.merchantName = rule.displayName
             if let category = rule.category {
                 transaction.category = category
+            }
+            if rule.isRecurring {
+                transaction.isRecurring = true
             }
             transaction.updatedAt = .now
         }

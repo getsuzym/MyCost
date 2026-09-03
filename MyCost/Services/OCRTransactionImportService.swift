@@ -85,6 +85,7 @@ struct OCRTransactionImportService {
                     needsDirectionReview: normalized.needsReview,
                     category: category
                 )
+                transaction.isRecurring = draft.isRecurring
                 modelContext.insert(transaction)
                 outcome.insertedTransactionIDs.append(transaction.id)
                 if normalized.needsReview { outcome.reviewFlaggedCount += 1 }
@@ -124,6 +125,7 @@ struct OCRTransactionImportService {
         transaction.transactionDate = draft.transactionDate
         transaction.status = draft.status
         transaction.category = category
+        if draft.isRecurring { transaction.isRecurring = true }
         transaction.duplicateState = .unique
         transaction.updatedAt = .now
     }
@@ -135,15 +137,24 @@ struct OCRTransactionImportService {
         existingRules: [MerchantRule],
         modelContext: ModelContext
     ) -> Bool {
-        guard draft.shouldRememberMerchantRule else { return false }
         let merchantChanged = draft.trimmedMerchantName != draft.parsedMerchantName
-        guard merchantChanged || category != nil else { return false }
+        let wantsRecurringRule = draft.markFutureRecurring && draft.isRecurring
+        guard (draft.shouldRememberMerchantRule && (merchantChanged || category != nil)) || wantsRecurringRule else {
+            return false
+        }
+
+        // A "mark future from this merchant as recurring" choice makes a
+        // Contains rule keyed on the merchant name; otherwise an Exact rule on
+        // the original description.
+        let matchType: MerchantRuleMatchType = wantsRecurringRule ? .contains : .exact
+        let matchText = wantsRecurringRule ? draft.trimmedMerchantName : draft.sourceText
 
         return ruleService.learnRule(
-            matchText: draft.sourceText,
+            matchText: matchText,
             displayName: draft.trimmedMerchantName,
             category: category,
-            matchType: .exact,
+            matchType: matchType,
+            isRecurring: wantsRecurringRule,
             existingRules: existingRules,
             modelContext: modelContext,
             saveImmediately: false

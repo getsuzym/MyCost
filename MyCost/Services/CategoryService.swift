@@ -24,6 +24,16 @@ enum CategoryError: LocalizedError, Equatable {
     }
 }
 
+extension Sequence where Element == Category {
+    /// Localized, case-insensitive alphabetical order by `name`. Use this in the
+    /// places where the user is *selecting or managing* categories (Review
+    /// category picker, Category Management list, editor pickers) — never on the
+    /// Dashboard, which keeps its spending-ranked order.
+    func alphabetizedByName() -> [Category] {
+        sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
 /// How many things point at a category — shown before a destructive delete so
 /// references are never dropped silently.
 struct CategoryReferenceCounts: Equatable {

@@ -208,36 +208,32 @@ private struct CategoryBreakdownRow: View {
     }
 }
 
-/// Native SwiftUI bar chart of category spending. Only positive-amount
-/// categories get a bar; the full list (including net-refund categories) stays
-/// in the text rows below.
+/// Native SwiftUI donut chart of category spending. Only positive-amount
+/// categories get a slice; the full list (including net-refund categories) and
+/// every exact dollar amount + percentage stay in the text rows below.
 private struct SpendingDistributionChart: View {
     let categories: [CategorySpend]
 
-    private var barData: [CategorySpend] {
+    private var slices: [CategorySpend] {
         categories.filter { $0.amount > 0 }
     }
 
     var body: some View {
-        if barData.isEmpty {
+        if slices.isEmpty {
             Text("No positive spending to chart this month.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            Chart(barData) { category in
-                BarMark(
-                    x: .value("Amount", NSDecimalNumber(decimal: category.amount).doubleValue),
-                    y: .value("Category", category.categoryName)
+            Chart(slices) { category in
+                SectorMark(
+                    angle: .value("Amount", NSDecimalNumber(decimal: category.amount).doubleValue),
+                    innerRadius: .ratio(0.55),
+                    angularInset: 1.5
                 )
+                .cornerRadius(3)
                 .foregroundStyle(by: .value("Category", category.categoryName))
-                .annotation(position: .trailing, alignment: .leading) {
-                    Text(Formatters.percentString(category.percentageOfTotal))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
-            .chartLegend(.hidden)
-            .chartXAxis(.hidden)
+            .chartLegend(position: .trailing, alignment: .center, spacing: 8)
         }
     }
 }

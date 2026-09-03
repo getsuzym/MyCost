@@ -55,6 +55,10 @@ final class MerchantRule {
     var matchTypeRawValue: String = MerchantRuleMatchType.exact.rawValue
     /// New: higher wins outright in a conflict. Defaults to 0.
     var priority: Int = 0
+    /// Optional: when true, a matched transaction is also marked
+    /// `isRecurring`. Not every rule is a recurring one.
+    var isRecurring: Bool = false
+    var recurringFrequencyRawValue: String = RecurrenceFrequency.monthly.rawValue
     var createdAt: Date
     var updatedAt: Date
 
@@ -67,6 +71,8 @@ final class MerchantRule {
         displayName: String,
         matchType: MerchantRuleMatchType = .exact,
         priority: Int = 0,
+        isRecurring: Bool = false,
+        recurringFrequency: RecurrenceFrequency = .monthly,
         isEnabled: Bool = true,
         category: Category? = nil,
         createdAt: Date = .now,
@@ -78,10 +84,17 @@ final class MerchantRule {
         self.displayName = displayName
         self.matchTypeRawValue = matchType.rawValue
         self.priority = priority
+        self.isRecurring = isRecurring
+        self.recurringFrequencyRawValue = recurringFrequency.rawValue
         self.isEnabled = isEnabled
         self.category = category
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    var recurringFrequency: RecurrenceFrequency {
+        get { RecurrenceFrequency(rawValue: recurringFrequencyRawValue) ?? .monthly }
+        set { recurringFrequencyRawValue = newValue.rawValue }
     }
 
     var matchType: MerchantRuleMatchType {

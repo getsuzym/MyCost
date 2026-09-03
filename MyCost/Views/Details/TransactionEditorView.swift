@@ -34,6 +34,7 @@ struct TransactionEditorView: View {
     @State private var isRecurring = false
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
     @State private var customIntervalDays = 30
+    @State private var markFutureRecurring = false
     @State private var note = ""
     @State private var countsAsSpending = true
     /// Set once from the normalizer; cleared if the user overrides `countsAsSpending`.
@@ -128,7 +129,7 @@ struct TransactionEditorView: View {
             Section("Category") {
                 Picker("Category", selection: $selectedCategoryID) {
                     Text("Uncategorized").tag(UUID?.none)
-                    ForEach(visibleCategories) { category in
+                    ForEach(visibleCategories.alphabetizedByName()) { category in
                         Label(category.name, systemImage: category.symbolName.isEmpty ? "tag" : category.symbolName)
                             .tag(Optional(category.id))
                     }
@@ -136,7 +137,7 @@ struct TransactionEditorView: View {
                 .accessibilityIdentifier("transactionEditor.category")
             }
 
-            Section("Tracking") {
+            Section {
                 Toggle("Exclude from totals", isOn: $isExcluded)
                     .accessibilityIdentifier("transactionEditor.exclude")
                 if isExcluded {
@@ -144,7 +145,7 @@ struct TransactionEditorView: View {
                         .accessibilityIdentifier("transactionEditor.excludedReason")
                 }
 
-                Toggle("Recurring payment", isOn: $isRecurring)
+                Toggle("Recurring", isOn: $isRecurring)
                     .accessibilityIdentifier("transactionEditor.recurring")
                 if isRecurring {
                     Picker("Frequency", selection: $recurrenceFrequency) {
@@ -157,7 +158,15 @@ struct TransactionEditorView: View {
                         Stepper("Every \(customIntervalDays) days", value: $customIntervalDays, in: 1...365)
                             .accessibilityIdentifier("transactionEditor.customIntervalDays")
                     }
+
+                    Toggle("Mark future transactions from this merchant as recurring", isOn: $markFutureRecurring)
+                        .font(.callout)
+                        .accessibilityIdentifier("transactionEditor.markFutureRecurring")
                 }
+            } header: {
+                Text("Tracking")
+            } footer: {
+                Text("Any transaction can be recurring — rent, mortgage, insurance, utilities, subscriptions — independent of its category.")
             }
 
             Section("Note") {
@@ -380,6 +389,8 @@ struct TransactionEditorView: View {
 
         let action: CRUDFeedback.Action = { if case .add = mode { return .add } else { return .update } }()
 
+        learnRecurringRuleIfRequested()
+
         do {
             try modelContext.save()
         } catch {
@@ -491,6 +502,25 @@ struct TransactionEditorView: View {
             modelContext.insert(recurringPayment)
         }
         transaction.recurringPayment = recurringPayment
+    }
+
+    /// "Mark future transactions from this merchant as recurring" → a Contains
+    /// rule keyed on the merchant name that also carries `isRecurring`.
+    private func learnRecurringRuleIfRequested() {
+        guard markFutureRecurring, isRecurring else { return }
+        let trimmedMerchant = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMerchant.isEmpty else { return }
+        merchantRuleService.learnRule(
+            matchText: trimmedMerchant,
+            displayName: trimmedMerchant,
+            category: categories.first { $0.id == selectedCategoryID },
+            matchType: .contains,
+            isRecurring: true,
+            recurringFrequency: recurrenceFrequency,
+            existingRules: merchantRules,
+            modelContext: modelContext,
+            saveImmediately: false
+        )
     }
 
     private func rememberPendingMerchantChange(matchType: MerchantRuleMatchType) {

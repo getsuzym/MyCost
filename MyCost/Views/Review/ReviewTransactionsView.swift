@@ -193,7 +193,8 @@ struct ReviewTransactionsView: View {
                         suggestionStates[draft.id] = nil
                     },
                     onSuggestCategory: { suggestCategory(for: draft.id) },
-                    onDismissSuggestion: { suggestionStates[draft.id] = nil }
+                    onDismissSuggestion: { suggestionStates[draft.id] = nil },
+                    onCategoryUserSet: { ocrReviewStore.markCategoryUserSet(id: draft.id) }
                 )
             }
         } header: {
@@ -302,9 +303,11 @@ struct ReviewTransactionsView: View {
             availableCategoryNames: categories.map(\.name)
         )
         switch outcome {
-        case let .ruleMatch(displayName, categoryName, _):
+        case let .ruleMatch(displayName, categoryName, ruleID):
+            let rule = merchantRules.first { $0.id == ruleID }
             ocrReviewStore.applyCategorization(
-                to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName)
+                to: draftID, merchantName: displayName, categoryID: categoryID(named: categoryName),
+                ruleID: ruleID, isRecurring: rule?.isRecurring ?? false
             )
             suggestionStates[draftID] = .applied(categoryName ?? "no category")
         case let .localMatch(displayName, categoryName):
@@ -333,6 +336,7 @@ private struct OCRTransactionDraftRow: View {
     let onRemove: () -> Void
     let onSuggestCategory: () -> Void
     let onDismissSuggestion: () -> Void
+    let onCategoryUserSet: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -380,29 +384,37 @@ private struct OCRTransactionDraftRow: View {
                     .accessibilityIdentifier("review.date")
             }
 
-            Picker("Category", selection: $draft.selectedCategoryID) {
+            Picker("Category", selection: Binding(
+                get: { draft.selectedCategoryID },
+                set: { newValue in
+                    draft.selectedCategoryID = newValue
+                    // Only the Picker's own binding fires this — programmatic
+                    // rule/suggestion assignment does not.
+                    onCategoryUserSet()
+                }
+            )) {
                 Text("Uncategorized").tag(UUID?.none)
-                ForEach(categories.filter { $0.isActive || $0.id == draft.selectedCategoryID }) { category in
+                ForEach(categories.filter { $0.isActive || $0.id == draft.selectedCategoryID }.alphabetizedByName()) { category in
                     Label(category.name, systemImage: category.symbolName.isEmpty ? "tag" : category.symbolName)
                         .tag(Optional(category.id))
                 }
             }
             .accessibilityIdentifier("review.category")
 
+            ruleStatusIndicator
+
+            Toggle("Recurring", isOn: $draft.isRecurring)
+                .accessibilityIdentifier("review.recurring")
+            if draft.isRecurring {
+                Toggle("Mark future transactions from this merchant as recurring", isOn: $draft.markFutureRecurring)
+                    .font(.caption)
+                    .accessibilityIdentifier("review.markFutureRecurring")
+            }
+
             Toggle("Remember merchant rule", isOn: $draft.shouldRememberMerchantRule)
                 .accessibilityIdentifier("review.rememberMerchantRule")
 
             categorySuggestionView
-
-            highlightedField(field: .status) {
-                Picker("Status", selection: $draft.status) {
-                    ForEach(TransactionStatus.allCases) { status in
-                        Text(status.label).tag(status)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("review.status")
-            }
 
             DisclosureGroup("OCR Text") {
                 Text(draft.sourceText)
@@ -428,6 +440,34 @@ private struct OCRTransactionDraftRow: View {
             }
         }
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var ruleStatusIndicator: some View {
+        let status = draft.categorizationStatus
+        HStack(spacing: 6) {
+            Image(systemName: icon(for: status))
+            Text(status.label)
+        }
+        .font(.caption2)
+        .foregroundStyle(color(for: status))
+        .accessibilityIdentifier("review.ruleStatus")
+    }
+
+    private func icon(for status: DraftCategorizationStatus) -> String {
+        switch status {
+        case .ruleMatched: "checkmark.seal.fill"
+        case .categorized: "tag.fill"
+        case .uncategorized: "exclamationmark.circle.fill"
+        }
+    }
+
+    private func color(for status: DraftCategorizationStatus) -> Color {
+        switch status {
+        case .ruleMatched: .green
+        case .categorized: .secondary
+        case .uncategorized: .orange
+        }
     }
 
     @ViewBuilder
