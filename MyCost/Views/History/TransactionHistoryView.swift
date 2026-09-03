@@ -8,6 +8,7 @@ struct TransactionHistoryView: View {
 
     @State private var isAddingTransaction = false
     @State private var categoryFilter: CategoryFilter = .all
+    @State private var recurringFilter: RecurringFilter = .all
 
     private enum CategoryFilter: Hashable {
         case all
@@ -16,14 +17,16 @@ struct TransactionHistoryView: View {
     }
 
     private var filteredTransactions: [Transaction] {
+        let byCategory: [Transaction]
         switch categoryFilter {
         case .all:
-            return transactions
+            byCategory = transactions
         case .uncategorized:
-            return transactions.filter { $0.category == nil }
+            byCategory = transactions.filter { $0.category == nil }
         case .category(let id):
-            return transactions.filter { $0.category?.id == id }
+            byCategory = transactions.filter { $0.category?.id == id }
         }
+        return byCategory.filter { recurringFilter.includes($0) }
     }
 
     private var filterLabel: String {
@@ -36,12 +39,18 @@ struct TransactionHistoryView: View {
 
     var body: some View {
         List {
-            if !categories.isEmpty {
-                Section {
+            Section {
+                Picker("Recurring", selection: $recurringFilter) {
+                    ForEach(RecurringFilter.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("history.recurringFilter")
+
+                if !categories.isEmpty {
                     Picker("Category", selection: $categoryFilter) {
                         Text("All").tag(CategoryFilter.all)
                         Text("Uncategorized").tag(CategoryFilter.uncategorized)
-                        ForEach(categories) { category in
+                        ForEach(categories.alphabetizedByName()) { category in
                             Text(category.name).tag(CategoryFilter.category(category.id))
                         }
                     }

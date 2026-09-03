@@ -15,7 +15,7 @@ struct TransactionDetailView: View {
                 LabeledContent("Merchant", value: transaction.merchantName)
                 LabeledContent("Amount", value: Formatters.currencyString(for: transaction.amount))
                 LabeledContent("Date", value: Formatters.shortDate.string(from: transaction.transactionDate))
-                LabeledContent("Status", value: transaction.status.label)
+                LabeledContent("Account", value: transaction.accountName)
                 LabeledContent("Category", value: transaction.category?.name ?? "Uncategorized")
             }
 
@@ -74,7 +74,7 @@ struct TransactionDetailView: View {
         transaction.updatedAt = .now
         do {
             try modelContext.save()
-            ToastCenter.shared.success(CRUDFeedback.updated("transaction"))
+            ToastCenter.shared.success("Recurring status updated")
         } catch {
             transaction.isRecurring = !value
             ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))

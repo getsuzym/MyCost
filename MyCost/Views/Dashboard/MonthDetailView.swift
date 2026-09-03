@@ -138,8 +138,8 @@ struct MonthDetailView: View {
                 .accessibilityIdentifier("monthDetail.total")
 
             HStack {
-                summaryPill("Posted", summary.postedTotal)
-                summaryPill("Pending", summary.pendingTotal)
+                summaryPill("Recurring", summary.recurringTotal)
+                summaryPill("Non-Recurring", summary.nonRecurringTotal)
                 summaryPill("Count", nil, text: "\(monthTransactions.count)")
             }
         }
@@ -175,9 +175,6 @@ private struct MonthTransactionRow: View {
                 Text(Formatters.shortDate.string(from: transaction.transactionDate))
                 Text("·")
                 Text(transaction.category?.name ?? "Uncategorized")
-                if transaction.status == .pending {
-                    badge("Pending", .orange)
-                }
                 if transaction.isRecurring {
                     badge("Recurring", .blue)
                 }

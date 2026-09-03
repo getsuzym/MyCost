@@ -26,9 +26,11 @@ struct TransactionRowView: View {
                 Text(Formatters.currencyString(for: transaction.amount))
                     .font(.headline)
 
-                Text(transaction.status.label)
-                    .font(.caption)
-                    .foregroundStyle(transaction.status == .pending ? .orange : .secondary)
+                if transaction.isRecurring {
+                    Text("Recurring")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
             }
         }
     }

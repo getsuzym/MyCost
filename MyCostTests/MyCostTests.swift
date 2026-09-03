@@ -2944,6 +2944,92 @@ final class MyCostTests: XCTestCase {
         )
     }
 
+    // MARK: - Rule editing from Review + recurring filter
+
+    private func ocrCandidate(_ merchant: String, amount: Decimal, source: String? = nil) -> TransactionCandidate {
+        TransactionCandidate(
+            detectedDate: date(2026, 8, 3), rawMerchantDescription: merchant, amount: amount, status: .posted,
+            originalOCRText: source ?? "\(merchant) \(amount)", sourceText: source ?? "\(merchant) \(amount)",
+            confidence: TransactionCandidateFieldConfidences(date: 0.9, merchantDescription: 0.9, amount: 0.9, status: 0.9),
+            validationFlags: []
+        )
+    }
+
+    private func reviewStore(_ candidates: [TransactionCandidate], rules: [MerchantRule] = []) -> OCRTransactionReviewStore {
+        let store = OCRTransactionReviewStore()
+        store.replaceCandidates(candidates, merchantRules: rules, referenceDate: date(2026, 8, 31))
+        return store
+    }
+
+    func testApplyingARuleToOneReviewDraftUpdatesMerchantCategoryRecurringAndRuleStatus() {
+        let dining = Category(name: "Dining", colorHex: "#000000", symbolName: "fork.knife")
+        let store = reviewStore([ocrCandidate("SQ *NETFLIX.COM 12345", amount: 15.99)])
+        XCTAssertEqual(store.drafts[0].categorizationStatus, .uncategorized)
+
+        let rule = MerchantRule(matchText: "NETFLIX", displayName: "Netflix", matchType: .contains, isRecurring: true, category: dining)
+        XCTAssertTrue(store.applyRule(rule, toDraft: store.drafts[0].id))
+
+        XCTAssertEqual(store.drafts[0].merchantName, "Netflix")
+        XCTAssertEqual(store.drafts[0].selectedCategoryID, dining.id)
+        XCTAssertTrue(store.drafts[0].isRecurring)
+        XCTAssertEqual(store.drafts[0].categorizationStatus, .ruleMatched)
+    }
+
+    func testApplyRuleToBatchOnlyTouchesMatchingReviewDrafts() {
+        let store = reviewStore([
+            ocrCandidate("NETFLIX.COM", amount: 15.99),
+            ocrCandidate("PAYPAL *NETFLIX 8899", amount: 15.99),
+            ocrCandidate("TIM HORTONS #21", amount: 3.10)
+        ])
+        let rule = MerchantRule(matchText: "NETFLIX", displayName: "Netflix", matchType: .contains)
+
+        XCTAssertEqual(store.draftsMatching(rule, excluding: store.drafts[0].id).count, 1)
+        XCTAssertEqual(store.applyRuleToBatch(rule), 2)
+        XCTAssertEqual(store.drafts.filter { $0.merchantName == "Netflix" }.count, 2)
+        XCTAssertEqual(store.drafts[2].merchantName, "TIM HORTONS #21")
+    }
+
+    func testClearAppliedRuleFallsBackToCategorizedStatus() {
+        let dining = Category(name: "Dining", colorHex: "#000000", symbolName: "fork.knife")
+        let rule = MerchantRule(matchText: "NETFLIX", displayName: "Netflix", matchType: .contains, category: dining)
+        let store = reviewStore([ocrCandidate("NETFLIX.COM", amount: 15.99)], rules: [rule])
+        XCTAssertEqual(store.drafts[0].categorizationStatus, .ruleMatched)
+
+        store.clearAppliedRule(id: store.drafts[0].id)
+        XCTAssertEqual(store.drafts[0].categorizationStatus, .categorized)
+    }
+
+    func testRecurringFilterAllRecurringNonRecurring() throws {
+        let housing = makeCategory("Housing", sortOrder: 0)
+        let a = insertTransaction("Mortgage", amount: 2000, on: date(2026, 8, 1), category: housing)
+        _ = insertTransaction("Coffee", amount: 5, on: date(2026, 8, 2), category: housing)
+        a.isRecurring = true
+        try context.save()
+
+        let all = try allTransactions()
+        XCTAssertEqual(all.filter(RecurringFilter.all.includes).count, 2)
+        XCTAssertEqual(all.filter(RecurringFilter.recurring.includes).map(\.merchantName), ["Mortgage"])
+        XCTAssertEqual(all.filter(RecurringFilter.nonRecurring.includes).map(\.merchantName), ["Coffee"])
+    }
+
+    func testDashboardSummaryHasEveryFigureItNeedsWithoutStatusUI() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let housing = makeCategory("Housing", sortOrder: 1)
+        let mortgage = insertTransaction("Mortgage", amount: 1800, on: date(2026, 8, 1), category: housing)
+        mortgage.isRecurring = true
+        insertTransaction("Bistro", amount: 200, on: date(2026, 8, 3), category: dining)
+        try context.save()
+
+        let s = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(s.total, 2000)
+        XCTAssertEqual(s.recurringTotal, 1800)
+        XCTAssertEqual(s.nonRecurringTotal, 200)
+        XCTAssertEqual(s.highestCategory?.categoryName, "Housing")
+        XCTAssertEqual(s.lowestCategory?.categoryName, "Dining")
+        XCTAssertEqual(s.categoryTotals.map(\.categoryName), ["Housing", "Dining"])
+        XCTAssertEqual(s.categoryTotals.first { $0.categoryName == "Housing" }?.percentageOfTotal ?? 0, 90, accuracy: 0.001)
+    }
+
         private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }

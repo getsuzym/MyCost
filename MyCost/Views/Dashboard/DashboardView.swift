@@ -98,30 +98,31 @@ struct DashboardView: View {
                 }
             }
 
-            Section("Status") {
-                MetricRow(title: "Posted", value: Formatters.currencyString(for: summary.postedTotal), systemImage: "checkmark.circle")
-                    .accessibilityIdentifier("dashboard.postedTotal")
-                MetricRow(title: "Pending", value: Formatters.currencyString(for: summary.pendingTotal), systemImage: "clock")
-                    .accessibilityIdentifier("dashboard.pendingTotal")
-            }
-
             Section("Recurring") {
-                MetricRow(
-                    title: "Expected Monthly",
-                    value: Formatters.currencyString(for: summary.expectedMonthlyRecurringTotal),
-                    systemImage: "calendar.badge.clock"
-                )
-                .accessibilityIdentifier("dashboard.expectedRecurring")
-                MetricRow(
-                    title: "Recurring This Month",
-                    value: Formatters.currencyString(for: summary.recurringTotal),
-                    systemImage: "repeat"
-                )
-                MetricRow(
-                    title: "Non-Recurring This Month",
-                    value: Formatters.currencyString(for: summary.nonRecurringTotal),
-                    systemImage: "cart"
-                )
+                let recurringCount = monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
+                    .filter { $0.isRecurring && !$0.isExcluded && $0.countsAsSpending }.count
+
+                NavigationLink {
+                    MonthTransactionsListView(month: monthAnchor, scope: .recurring)
+                } label: {
+                    MetricRow(
+                        title: "Recurring This Month",
+                        value: "\(recurringCount) · \(Formatters.currencyString(for: summary.recurringTotal))",
+                        systemImage: "repeat"
+                    )
+                }
+                .accessibilityIdentifier("dashboard.recurringThisMonth")
+
+                NavigationLink {
+                    MonthTransactionsListView(month: monthAnchor, scope: .nonRecurring)
+                } label: {
+                    MetricRow(
+                        title: "Non-Recurring This Month",
+                        value: Formatters.currencyString(for: summary.nonRecurringTotal),
+                        systemImage: "cart"
+                    )
+                }
+                .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
             }
 
             Section("Categories") {

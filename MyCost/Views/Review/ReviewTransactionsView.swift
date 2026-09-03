@@ -25,6 +25,9 @@ struct ReviewTransactionsView: View {
     @State private var importError: String?
     @State private var suggestionStates: [UUID: CategorySuggestionRowState] = [:]
     @State private var sourcePreviewID: UUID?
+    @State private var ruleSheetDraftID: UUID?
+    @State private var pendingBatchRule: MerchantRule?
+    @State private var pendingBatchCount = 0
     /// Account type chosen for each distinct account name in this review session.
     @State private var accountTypeByName: [String: AccountType] = [:]
     private let merchantRuleService = MerchantRuleService()
@@ -120,10 +123,63 @@ struct ReviewTransactionsView: View {
         .sheet(item: Binding(get: { sourcePreviewID.map(IdentifiedUUID.init) }, set: { sourcePreviewID = $0?.id })) { wrapper in
             sourcePreview(for: wrapper.id)
         }
+        .sheet(item: Binding(get: { ruleSheetDraftID.map(IdentifiedUUID.init) }, set: { ruleSheetDraftID = $0?.id })) { wrapper in
+            ruleEditorSheet(for: wrapper.id)
+        }
+        .confirmationDialog(
+            "Apply this rule to \(pendingBatchCount) other matching transaction\(pendingBatchCount == 1 ? "" : "s") in this batch?",
+            isPresented: Binding(get: { pendingBatchRule != nil }, set: { if !$0 { pendingBatchRule = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Apply to All") {
+                if let rule = pendingBatchRule {
+                    let n = ocrReviewStore.applyRuleToBatch(rule)
+                    ToastCenter.shared.success("Rule applied to \(n) transaction\(n == 1 ? "" : "s")")
+                }
+                pendingBatchRule = nil
+            }
+            Button("Just This One", role: .cancel) { pendingBatchRule = nil }
+        }
         .alert("Import failed", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(importError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func ruleEditorSheet(for draftID: UUID) -> some View {
+        if let draft = ocrReviewStore.drafts.first(where: { $0.id == draftID }) {
+            let existing = merchantRuleService.bestRule(
+                for: draft.trimmedMerchantName,
+                originalDescription: draft.sourceText,
+                rules: merchantRules
+            )
+            NavigationStack {
+                MerchantRuleEditorView(
+                    rule: existing,
+                    categories: categories,
+                    initialMatchText: draft.parsedMerchantName.isEmpty ? draft.trimmedMerchantName : draft.parsedMerchantName,
+                    initialDisplayName: draft.trimmedMerchantName,
+                    initialCategoryID: draft.selectedCategoryID,
+                    initialIsRecurring: draft.isRecurring,
+                    previewExample: draft.sourceText.isEmpty ? draft.trimmedMerchantName : draft.sourceText,
+                    onSaved: { rule in handleRuleSaved(rule, draftID: draftID) },
+                    onDeleted: existing == nil ? nil : { ocrReviewStore.clearAppliedRule(id: draftID) }
+                )
+            }
+        }
+    }
+
+    private func handleRuleSaved(_ rule: MerchantRule, draftID: UUID) {
+        ocrReviewStore.applyRule(rule, toDraft: draftID)
+        suggestionStates[draftID] = nil
+        let others = ocrReviewStore.draftsMatching(rule, excluding: draftID)
+        if others.isEmpty {
+            ToastCenter.shared.success(CRUDFeedback.updated("rule"))
+        } else {
+            pendingBatchCount = others.count
+            pendingBatchRule = rule
         }
     }
 
@@ -194,7 +250,8 @@ struct ReviewTransactionsView: View {
                     },
                     onSuggestCategory: { suggestCategory(for: draft.id) },
                     onDismissSuggestion: { suggestionStates[draft.id] = nil },
-                    onCategoryUserSet: { ocrReviewStore.markCategoryUserSet(id: draft.id) }
+                    onCategoryUserSet: { ocrReviewStore.markCategoryUserSet(id: draft.id) },
+                    onEditRule: { ruleSheetDraftID = draft.id }
                 )
             }
         } header: {
@@ -337,6 +394,7 @@ private struct OCRTransactionDraftRow: View {
     let onSuggestCategory: () -> Void
     let onDismissSuggestion: () -> Void
     let onCategoryUserSet: () -> Void
+    let onEditRule: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -446,12 +504,15 @@ private struct OCRTransactionDraftRow: View {
     private var ruleStatusIndicator: some View {
         let status = draft.categorizationStatus
         HStack(spacing: 6) {
-            Image(systemName: icon(for: status))
-            Text(status.label)
+            Label(status.label, systemImage: icon(for: status))
+                .foregroundStyle(color(for: status))
+                .accessibilityIdentifier("review.ruleStatus")
+            Spacer()
+            Button("Edit Rule", systemImage: "slider.horizontal.3", action: onEditRule)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("review.editRule")
         }
         .font(.caption2)
-        .foregroundStyle(color(for: status))
-        .accessibilityIdentifier("review.ruleStatus")
     }
 
     private func icon(for status: DraftCategorizationStatus) -> String {

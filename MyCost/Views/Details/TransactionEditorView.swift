@@ -99,12 +99,6 @@ struct TransactionEditorView: View {
                     .accessibilityIdentifier("transactionEditor.amount")
 
                 DatePicker("Date", selection: $transactionDate, displayedComponents: .date)
-
-                Picker("Status", selection: $status) {
-                    ForEach(TransactionStatus.allCases) { status in
-                        Text(status.label).tag(status)
-                    }
-                }
             }
 
             Section {

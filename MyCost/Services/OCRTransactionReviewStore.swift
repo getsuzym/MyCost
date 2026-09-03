@@ -291,6 +291,46 @@ final class OCRTransactionReviewStore: ObservableObject {
         drafts[index].didUserSetCategory = true
     }
 
+    /// Clear a draft's rule attribution (e.g. after its rule was deleted).
+    func clearAppliedRule(id: UUID) {
+        guard let index = drafts.firstIndex(where: { $0.id == id }) else { return }
+        drafts[index].appliedRuleID = nil
+    }
+
+    /// Whether `rule` matches the draft's merchant name, its original OCR
+    /// (`sourceText`), or the parsed merchant.
+    private func ruleMatches(_ rule: MerchantRule, _ draft: OCRTransactionDraft, _ service: MerchantRuleService) -> Bool {
+        service.matches(rule, merchantName: draft.merchantName, originalDescription: draft.sourceText)
+            || service.matches(rule, merchantName: draft.parsedMerchantName, originalDescription: draft.sourceText)
+    }
+
+    /// Applies `rule` to one draft if it matches — updating merchant/category/
+    /// recurring and marking the row "Rule matched".
+    @discardableResult
+    func applyRule(_ rule: MerchantRule, toDraft id: UUID, service: MerchantRuleService = MerchantRuleService()) -> Bool {
+        guard let index = drafts.firstIndex(where: { $0.id == id }), ruleMatches(rule, drafts[index], service) else { return false }
+        drafts[index].applyMerchantRule(MerchantRuleApplication(displayName: rule.displayName, category: rule.category, rule: rule))
+        drafts[index].didUserSetCategory = false
+        return true
+    }
+
+    /// Ids of other drafts (not `excluding`) that `rule` also matches.
+    func draftsMatching(_ rule: MerchantRule, excluding id: UUID, service: MerchantRuleService = MerchantRuleService()) -> [UUID] {
+        drafts.filter { $0.id != id && ruleMatches(rule, $0, service) }.map(\.id)
+    }
+
+    /// Applies `rule` to every matching draft in the batch; returns the count.
+    @discardableResult
+    func applyRuleToBatch(_ rule: MerchantRule, service: MerchantRuleService = MerchantRuleService()) -> Int {
+        var count = 0
+        for index in drafts.indices where ruleMatches(rule, drafts[index], service) {
+            drafts[index].applyMerchantRule(MerchantRuleApplication(displayName: rule.displayName, category: rule.category, rule: rule))
+            drafts[index].didUserSetCategory = false
+            count += 1
+        }
+        return count
+    }
+
     func removeDrafts(ids: Set<UUID>) {
         drafts.removeAll { ids.contains($0.id) }
     }

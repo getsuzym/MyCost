@@ -192,7 +192,6 @@ private struct CategoryTransactionRow: View {
                 Text(Formatters.shortDate.string(from: transaction.transactionDate))
                 Text("·")
                 Text(transaction.accountName)
-                if transaction.status == .pending { badge("Pending", .orange) }
                 if transaction.isRecurring { badge("Recurring", .blue) }
                 if transaction.isExcluded { badge("Excluded", .secondary) }
                 if !transaction.countsAsSpending { badge("Not spending", .secondary) }
