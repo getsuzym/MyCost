@@ -2940,6 +2940,13 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(service.attach(rule: rule, to: txn, requireMatch: false))   // force
         XCTAssertEqual(txn.merchantName, "Hydro")
         XCTAssertTrue(txn.isRecurring)
+
+        // A disabled rule can still be force-attached (the picker offers it).
+        let disabled = MerchantRule(matchText: "GYM", displayName: "Gym", matchType: .contains, isRecurring: true, isEnabled: false)
+        let other = Transaction(merchantName: "Anytime Fitness", originalDescription: "Anytime Fitness", amount: 40, transactionDate: date(2026, 9, 2))
+        XCTAssertTrue(service.attach(rule: disabled, to: other, requireMatch: false))
+        XCTAssertEqual(other.merchantName, "Gym")
+        XCTAssertTrue(other.isRecurring)
     }
 
     func testGuessAccountTypeReadsTheDominantSignOfDetectedAmounts() {

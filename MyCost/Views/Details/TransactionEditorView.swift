@@ -188,7 +188,7 @@ struct TransactionEditorView: View {
             } header: {
                 Text("Merchant Rule")
             } footer: {
-                Text("Apply one of your saved rules (including recurring ones) to this transaction. Matching rules attach with one tap; you can also force-attach a rule whose text no longer matches after a rename.")
+                Text("Apply one of your saved rules (including recurring ones). Picking a rule applies it to this transaction right away \u{2014} matching rules in one tap, others after a confirmation (useful after a rename).")
             }
 
             Section("Note") {
@@ -288,8 +288,10 @@ struct TransactionEditorView: View {
         return ""
     }
 
-    /// Apply a hand-picked rule to the editor's fields; the normal Save flow
-    /// then persists it (and creates the series if the rule is recurring).
+    /// Apply a hand-picked rule to the transaction. For an existing transaction
+    /// this persists immediately (name / category / recurring flag + series) so
+    /// the user doesn't have to find Save; for a new one it just pre-fills the
+    /// form, which Save then commits.
     private func attachRule(_ rule: MerchantRule) {
         merchantName = rule.displayName
         if let categoryID = rule.category?.id {
@@ -299,7 +301,30 @@ struct TransactionEditorView: View {
             isRecurring = true
             recurrenceFrequency = rule.recurringFrequency
         }
-        ToastCenter.shared.success("Rule \u{201C}\(rule.normalizedMerchantName)\u{201D} attached")
+
+        guard case .edit(let transaction) = mode else {
+            ToastCenter.shared.success("Rule filled in \u{2014} tap Save to apply it")
+            return
+        }
+
+        merchantRuleService.attach(rule: rule, to: transaction, requireMatch: false)
+        updateRecurringPayment(
+            for: transaction,
+            category: transaction.category,
+            frequency: rule.isRecurring ? rule.recurringFrequency : recurrenceFrequency,
+            customIntervalDays: customIntervalDays,
+            monthInterval: monthInterval,
+            weekdayOrdinal: weekdayOrdinal,
+            weekday: weekday
+        )
+        transaction.updatedAt = .now
+
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success("Rule \u{201C}\(rule.normalizedMerchantName)\u{201D} attached")
+        } catch {
+            ToastCenter.shared.error("Couldn\u{2019}t attach the rule. Please try again.")
+        }
     }
 
     private func loadInitialValues() {

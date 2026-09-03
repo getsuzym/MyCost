@@ -1,20 +1,19 @@
 import SwiftUI
 
-/// Pick one of your existing merchant rules to apply to the transaction in
-/// hand. Rules whose match text matches (the merchant name **or** the bank's
-/// original description) are listed first and attach with one tap; the rest can
-/// still be force-attached after a confirmation, for when a name was cleaned up
-/// so much that the rule text no longer appears in it.
+/// Pick one of your saved merchant rules to apply to the transaction in hand.
+/// Rules whose match text is found in the merchant name **or** the bank's
+/// original description are listed under "Matching rules"; every other rule
+/// (including disabled ones, and ones whose text no longer matches after a
+/// rename) is under "Other rules". Either way, one tap attaches it.
 struct AttachExistingRuleView: View {
     let merchantName: String
-    /// The bank's raw description. Rules are often learned from this, so it's
+    /// The bank's raw description — rules are often learned from this, so it's
     /// checked even when the visible merchant name has been hand-edited.
     let originalDescription: String
     let rules: [MerchantRule]
     let onAttach: (MerchantRule) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var forceAttachCandidate: MerchantRule?
     private let service = MerchantRuleService()
 
     private var showsOriginalDescription: Bool {
@@ -29,9 +28,11 @@ struct AttachExistingRuleView: View {
         ).alphabetizedByName()
     }
 
+    /// Everything not already in `matching` — including disabled rules, so a
+    /// rule you turned off is still reachable here.
     private var others: [MerchantRule] {
         let matchIDs = Set(matching.map(\.id))
-        return rules.filter { $0.isEnabled && !matchIDs.contains($0.id) }.alphabetizedByName()
+        return rules.filter { !matchIDs.contains($0.id) }.alphabetizedByName()
     }
 
     var body: some View {
@@ -49,38 +50,32 @@ struct AttachExistingRuleView: View {
                 Text("Transaction text")
             }
 
-            Section {
-                if matching.isEmpty {
-                    Text("No rule's match text matches this transaction. Pick one below to attach it anyway.")
+            if rules.isEmpty {
+                Section {
+                    Text("You have no saved rules yet.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(matching) { rule in
-                    Button {
-                        onAttach(rule)
-                        dismiss()
-                    } label: {
-                        RuleSummaryRow(rule: rule)
+            }
+
+            if !matching.isEmpty {
+                Section {
+                    ForEach(matching) { rule in
+                        attachButton(for: rule, id: "attachRule.match")
                     }
-                    .accessibilityIdentifier("attachRule.match")
+                } header: {
+                    Text("Matching rules")
                 }
-            } header: {
-                Text("Matching rules")
             }
 
             if !others.isEmpty {
                 Section {
                     ForEach(others) { rule in
-                        Button {
-                            forceAttachCandidate = rule
-                        } label: {
-                            RuleSummaryRow(rule: rule)
-                        }
-                        .accessibilityIdentifier("attachRule.other")
+                        attachButton(for: rule, id: "attachRule.other")
                     }
                 } header: {
-                    Text("Other rules")
+                    Text(matching.isEmpty ? "Rules" : "Other rules")
                 } footer: {
-                    Text("These rules\u{2019} match text isn\u{2019}t found in this transaction. Tap one to attach it anyway \u{2014} useful when you\u{2019}ve renamed the transaction.")
+                    Text("The rule's match text isn't found in this transaction (or the rule is disabled), but tapping still applies it \u{2014} handy after you've renamed the transaction.")
                 }
             }
         }
@@ -91,27 +86,16 @@ struct AttachExistingRuleView: View {
                 Button("Cancel") { dismiss() }
             }
         }
-        .confirmationDialog(
-            "Attach this rule anyway?",
-            isPresented: Binding(
-                get: { forceAttachCandidate != nil },
-                set: { if !$0 { forceAttachCandidate = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Attach Rule") {
-                if let rule = forceAttachCandidate {
-                    onAttach(rule)
-                    forceAttachCandidate = nil
-                    dismiss()
-                }
-            }
-            Button("Cancel", role: .cancel) { forceAttachCandidate = nil }
-        } message: {
-            if let rule = forceAttachCandidate {
-                Text("\u{201C}\(rule.matchText)\u{201D} isn\u{2019}t found in this transaction, but the rule will still be applied to it.")
-            }
+    }
+
+    private func attachButton(for rule: MerchantRule, id: String) -> some View {
+        Button {
+            onAttach(rule)
+            dismiss()
+        } label: {
+            RuleSummaryRow(rule: rule)
         }
+        .accessibilityIdentifier(id)
     }
 }
 
