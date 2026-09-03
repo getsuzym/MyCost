@@ -195,6 +195,11 @@ final class OCRTransactionReviewStore: ObservableObject {
     /// Metadata about the batch import that produced `drafts`.
     @Published private(set) var batchInfo = OCRBatchSessionInfo()
 
+    /// A review session is "active" whenever there are drafts still on the
+    /// bench. Drives the review banner / shortcut and the "import already in
+    /// progress" prompt.
+    var hasActiveSession: Bool { !drafts.isEmpty }
+
     var selectedCount: Int {
         drafts.filter(\.isSelected).count
     }

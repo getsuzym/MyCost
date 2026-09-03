@@ -4,74 +4,88 @@ import SwiftUI
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var ocrReviewStore = OCRTransactionReviewStore()
+    @StateObject private var nav = AppNavigationModel()
 
     var body: some View {
         TabView {
             NavigationStack {
                 DashboardView()
             }
-            .tabItem {
-                Label("Dashboard", systemImage: "chart.pie")
-            }
+            .tabItem { Label("Dashboard", systemImage: "chart.pie") }
             .accessibilityIdentifier("tab.dashboard")
-
-            NavigationStack {
-                ImportView()
-            }
-            .environmentObject(ocrReviewStore)
-            .tabItem {
-                Label("Import", systemImage: "square.and.arrow.down")
-            }
-
-            NavigationStack {
-                ReviewTransactionsView()
-            }
-            .environmentObject(ocrReviewStore)
-            .tabItem {
-                Label("Review", systemImage: "checklist")
-            }
-
-            NavigationStack {
-                MerchantRulesView()
-            }
-            .tabItem {
-                Label("Rules", systemImage: "wand.and.stars")
-            }
-
-            NavigationStack {
-                CategoryManagementView()
-            }
-            .tabItem {
-                Label("Categories", systemImage: "folder")
-            }
-            .accessibilityIdentifier("tab.categories")
-
-            NavigationStack {
-                AccountsView()
-            }
-            .tabItem {
-                Label("Accounts", systemImage: "creditcard")
-            }
-            .accessibilityIdentifier("tab.accounts")
-
-            NavigationStack {
-                RecurringPaymentsView()
-            }
-            .tabItem {
-                Label("Recurring", systemImage: "repeat")
-            }
 
             NavigationStack {
                 TransactionHistoryView()
             }
-            .tabItem {
-                Label("History", systemImage: "list.bullet")
+            .tabItem { Label("Transactions", systemImage: "list.bullet") }
+            .accessibilityIdentifier("tab.transactions")
+
+            NavigationStack {
+                RecurringPaymentsView()
             }
-            .accessibilityIdentifier("tab.history")
+            .tabItem { Label("Recurring", systemImage: "repeat") }
+            .accessibilityIdentifier("tab.recurring")
+
+            NavigationStack {
+                MoreView()
+            }
+            .tabItem { Label("More", systemImage: "ellipsis.circle") }
+            .accessibilityIdentifier("tab.more")
         }
+        .environmentObject(ocrReviewStore)
+        .environmentObject(nav)
+        .safeAreaInset(edge: .top, spacing: 0) { reviewBanner }
         .toastHost()
+        .sheet(item: $nav.route) { route in
+            switch route {
+            case .importPicker:
+                NavigationStack { ImportView() }
+                    .environmentObject(ocrReviewStore)
+                    .environmentObject(nav)
+            case .review:
+                NavigationStack { ReviewTransactionsView() }
+                    .environmentObject(ocrReviewStore)
+                    .environmentObject(nav)
+            }
+        }
+        .confirmationDialog(
+            "Review session in progress",
+            isPresented: $nav.isShowingImportConflict,
+            titleVisibility: .visible
+        ) {
+            Button("Continue Current Review") { nav.continueCurrentReview() }
+            Button("Replace with New Import", role: .destructive) { nav.replaceReview(session: ocrReviewStore) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You have \(ocrReviewStore.drafts.count) transaction\(ocrReviewStore.drafts.count == 1 ? "" : "s") still under review. Starting a new import replaces that session.")
+        }
         .task {
             SeedDataService.seedDefaultCategoriesIfNeeded(modelContext: modelContext)
+        }
+    }
+
+    @ViewBuilder
+    private var reviewBanner: some View {
+        if ocrReviewStore.hasActiveSession, nav.route == nil {
+            Button {
+                nav.openReview()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checklist")
+                    Text("\(ocrReviewStore.drafts.count) transaction\(ocrReviewStore.drafts.count == 1 ? "" : "s") awaiting review")
+                        .lineLimit(1)
+                    Spacer()
+                    Text("Review").fontWeight(.semibold)
+                    Image(systemName: "chevron.right").font(.caption)
+                }
+                .font(.footnote)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(.thinMaterial)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("app.reviewBanner")
         }
     }
 }

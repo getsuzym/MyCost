@@ -3030,6 +3030,130 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(s.categoryTotals.first { $0.categoryName == "Housing" }?.percentageOfTotal ?? 0, 90, accuracy: 0.001)
     }
 
+    // MARK: - Simplified navigation & persistent review session
+
+    func testRequestImportOpensPickerWhenNoActiveSession() {
+        let session = OCRTransactionReviewStore()
+        let nav = AppNavigationModel()
+        XCTAssertFalse(session.hasActiveSession)
+
+        nav.requestImport(session: session)
+        XCTAssertEqual(nav.route, .importPicker)
+        XCTAssertFalse(nav.isShowingImportConflict)
+    }
+
+    func testRequestImportShowsConflictWhenAReviewSessionIsActive() {
+        let session = reviewStore([ocrCandidate("Netflix", amount: 15.99)])
+        let nav = AppNavigationModel()
+
+        nav.requestImport(session: session)
+        XCTAssertTrue(nav.isShowingImportConflict)
+        XCTAssertNil(nav.route, "a new import must not open silently")
+        XCTAssertEqual(session.drafts.count, 1, "the unfinished session is untouched")
+    }
+
+    func testConflictContinuePreservesSessionAndOpensReview() {
+        let session = reviewStore([ocrCandidate("Netflix", amount: 15.99)])
+        let nav = AppNavigationModel()
+        nav.requestImport(session: session)
+
+        nav.continueCurrentReview()
+        XCTAssertEqual(nav.route, .review)
+        XCTAssertFalse(nav.isShowingImportConflict)
+        XCTAssertEqual(session.drafts.count, 1)
+    }
+
+    func testConflictReplaceClearsSessionOnlyOnExplicitAction() {
+        let session = reviewStore([ocrCandidate("Netflix", amount: 15.99), ocrCandidate("Uber", amount: 8)])
+        let nav = AppNavigationModel()
+
+        nav.requestImport(session: session)
+        XCTAssertEqual(session.drafts.count, 2, "still there until the user chooses Replace")
+
+        nav.replaceReview(session: session)
+        XCTAssertTrue(session.drafts.isEmpty)
+        XCTAssertEqual(nav.route, .importPicker)
+    }
+
+    func testProcessingRoutesToReviewWhenTransactionsDetected() {
+        let nav = AppNavigationModel()
+        nav.finishImportProcessing(detectedCount: 5)
+        XCTAssertEqual(nav.route, .review)
+    }
+
+    func testProcessingStaysOnImportWhenNothingDetected() {
+        let nav = AppNavigationModel()
+        nav.route = .importPicker
+        nav.finishImportProcessing(detectedCount: 0)
+        XCTAssertEqual(nav.route, .importPicker)
+    }
+
+    func testReviewSessionSurvivesLeavingAndReturning() {
+        let session = reviewStore([ocrCandidate("SQ *NETFLIX 123", amount: 15.99), ocrCandidate("UBER TRIP", amount: 12)])
+        session.drafts[0].merchantName = "Netflix"
+        session.drafts[0].selectedCategoryID = UUID()
+        session.drafts[0].isRecurring = true
+        session.drafts[0].appliedRuleID = UUID()
+        session.drafts[0].didUserSetCategory = true
+        session.drafts[1].isSelected = false
+        session.drafts[1].duplicateSummary = "Possible duplicate"
+        session.drafts[1].duplicateDecision = .merge
+
+        // Leaving Review only dismisses a sheet — nothing calls into the session.
+
+        XCTAssertEqual(session.drafts.count, 2)
+        XCTAssertEqual(session.drafts[0].merchantName, "Netflix")
+        XCTAssertNotNil(session.drafts[0].selectedCategoryID)
+        XCTAssertTrue(session.drafts[0].isRecurring)
+        XCTAssertEqual(session.drafts[0].categorizationStatus, .categorized) // rule set + user edited
+        XCTAssertFalse(session.drafts[1].isSelected)
+        XCTAssertEqual(session.drafts[1].duplicateSummary, "Possible duplicate")
+        XCTAssertEqual(session.drafts[1].duplicateDecision, .merge)
+        XCTAssertTrue(session.hasActiveSession)
+    }
+
+    func testSuccessfulImportClearsTheReviewSessionAndShortcut() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        try context.save()
+        let session = OCRTransactionReviewStore()
+        session.replaceCandidates([ocrCandidate("Cafe", amount: 5)], merchantRules: [], referenceDate: date(2026, 8, 31))
+        session.drafts[0].selectedCategoryID = dining.id
+        session.drafts[0].isSelected = true
+        XCTAssertTrue(session.hasActiveSession)
+
+        let toImport = session.drafts.filter { $0.isSelected && $0.canImport }
+        let outcome = OCRTransactionImportService().importDrafts(
+            toImport, categories: try fetchCategories(), existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+        session.removeDrafts(ids: Set(toImport.map(\.id)))
+        if session.drafts.isEmpty { session.clear() }
+
+        XCTAssertFalse(session.hasActiveSession)
+    }
+
+    func testFreshImportAfterCompletionGoesStraightToThePicker() {
+        let session = OCRTransactionReviewStore() // previous session already imported → empty
+        let nav = AppNavigationModel()
+        nav.requestImport(session: session)
+        XCTAssertEqual(nav.route, .importPicker)
+        XCTAssertFalse(nav.isShowingImportConflict)
+    }
+
+    func testReviewSessionKeepsOnlyThumbnailsNotFullResolutionImages() {
+        let store = OCRTransactionReviewStore()
+        store.replaceBatch(
+            candidates: [ocrCandidate("Netflix", amount: 15.99)],
+            thumbnails: [:],
+            info: OCRBatchSessionInfo(screenshotCount: 1),
+            merchantRules: [],
+            referenceDate: date(2026, 8, 31)
+        )
+        XCTAssertEqual(store.drafts.count, 1)
+        XCTAssertTrue(store.sourceThumbnails.isEmpty)
+        // The only image storage on the session is `sourceThumbnails` (downscaled).
+    }
+
         private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }

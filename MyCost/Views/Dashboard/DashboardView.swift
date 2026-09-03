@@ -3,6 +3,9 @@ import SwiftData
 import SwiftUI
 
 struct DashboardView: View {
+    @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
+    @EnvironmentObject private var nav: AppNavigationModel
+
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
 
@@ -162,6 +165,16 @@ struct DashboardView: View {
             }
         }
         .navigationTitle("Dashboard")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    nav.requestImport(session: ocrReviewStore)
+                } label: {
+                    Label("Import Screenshots", systemImage: "photo.badge.plus")
+                }
+                .accessibilityIdentifier("dashboard.importScreenshots")
+            }
+        }
     }
 
     private func stepMonth(_ delta: Int) {

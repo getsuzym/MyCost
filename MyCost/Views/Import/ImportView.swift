@@ -1,13 +1,16 @@
 import SwiftData
 import SwiftUI
 
-/// Batch screenshot import: Select Screenshots → Preview Selection → Process
-/// Screenshots → (hand off to the Review tab) → Import → Confirmation.
+/// Batch screenshot import, presented as a sheet from the Dashboard's import
+/// button: Select Screenshots → Preview Selection → Process Screenshots → (auto
+/// hand-off to the persistent Review session).
 ///
 /// Full-resolution `UIImage`s live only in `queued` and only until processing
 /// finishes; after that the review session keeps just downscaled thumbnails.
 struct ImportView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
+    @EnvironmentObject private var nav: AppNavigationModel
+    @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
 
@@ -47,12 +50,26 @@ struct ImportView: View {
                 }
             }
         }
-        .navigationTitle("Import")
+        .navigationTitle("Import Screenshots")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+                    .disabled(phase == .processing)
+                    .accessibilityIdentifier("import.cancel")
+            }
+        }
         .sheet(isPresented: $isShowingPicker) {
             ImagePicker { result in
                 handlePicker(result)
             } onCancel: {
                 if queued.isEmpty { phase = .idle }
+            }
+        }
+        .onAppear {
+            // Tapping the Dashboard icon should land straight on the picker.
+            if phase == .idle, queued.isEmpty {
+                isShowingPicker = true
             }
         }
     }
@@ -153,22 +170,17 @@ struct ImportView: View {
         }
     }
 
+    /// Only reached when **nothing** was detected — otherwise processing routes
+    /// straight to Review. Lets the user retry or bail out.
     @ViewBuilder
     private var doneSection: some View {
         Section {
-            Label(summaryMessage ?? "Processing complete.", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.primary)
+            Label(summaryMessage ?? "No transactions detected.", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
                 .accessibilityIdentifier("import.summary")
-
-            if ocrReviewStore.drafts.isEmpty {
-                Text("No transactions were detected. Try clearer screenshots of the transaction list.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Open the Review tab to check and import \(ocrReviewStore.drafts.count) detected transaction\(ocrReviewStore.drafts.count == 1 ? "" : "s").")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Try clearer screenshots of the transaction list.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         } header: {
             Text("Detected")
         }
@@ -188,7 +200,7 @@ struct ImportView: View {
             Button {
                 resetToIdle()
             } label: {
-                Label("Import More Screenshots", systemImage: "photo.on.rectangle")
+                Label("Pick Different Screenshots", systemImage: "photo.on.rectangle")
             }
             .accessibilityIdentifier("import.importMore")
         }
@@ -237,8 +249,16 @@ struct ImportView: View {
             failures = result.failures
             summaryMessage = result.summaryMessage
             progress = nil
-            phase = .done
             ToastCenter.shared.info(result.summaryMessage)
+
+            if result.candidates.isEmpty {
+                // Nothing to review — stay here so the user can retry.
+                phase = .done
+            } else {
+                // Auto-navigate to the persistent Review session (even if some
+                // screenshots failed — Review shows the warning).
+                nav.finishImportProcessing(detectedCount: result.candidates.count)
+            }
         }
     }
 

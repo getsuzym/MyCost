@@ -58,6 +58,8 @@
 		000000000000000000000137 /* CategoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000038 /* CategoryDetailView.swift */; };
 		000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000039 /* MerchantRuleEditorView.swift */; };
 		000000000000000000000139 /* MonthTransactionsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003A /* MonthTransactionsListView.swift */; };
+		00000000000000000000013A /* AppNavigationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003B /* AppNavigationModel.swift */; };
+		00000000000000000000013B /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003C /* MoreView.swift */; };
 		0000000000000000000009A4 /* MyCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009A3 /* MyCostTests.swift */; };
 		0000000000000000000009B4 /* MyCostUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009B3 /* MyCostUITests.swift */; };
 /* End PBXBuildFile section */
@@ -115,6 +117,8 @@
 		000000000000000000000038 /* CategoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetailView.swift; sourceTree = "<group>"; };
 		000000000000000000000039 /* MerchantRuleEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleEditorView.swift; sourceTree = "<group>"; };
 		00000000000000000000003A /* MonthTransactionsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthTransactionsListView.swift; sourceTree = "<group>"; };
+		00000000000000000000003B /* AppNavigationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNavigationModel.swift; sourceTree = "<group>"; };
+		00000000000000000000003C /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		8A26197730479CE900C9C94A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0000000000000000000009A2 /* MyCostTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyCostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000009A3 /* MyCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyCostTests.swift; sourceTree = "<group>"; };
@@ -243,6 +247,8 @@
 			isa = PBXGroup;
 			children = (
 				00000000000000000000000B /* RootTabView.swift */,
+				00000000000000000000003B /* AppNavigationModel.swift */,
+				00000000000000000000003C /* MoreView.swift */,
 				000000000000000000000307 /* Dashboard */,
 				000000000000000000000308 /* Import */,
 				000000000000000000000309 /* Review */,
@@ -491,6 +497,8 @@
 				000000000000000000000137 /* CategoryDetailView.swift in Sources */,
 				000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */,
 				000000000000000000000139 /* MonthTransactionsListView.swift in Sources */,
+				00000000000000000000013A /* AppNavigationModel.swift in Sources */,
+				00000000000000000000013B /* MoreView.swift in Sources */,
 				000000000000000000000114 /* VisionOCRService.swift in Sources */,
 				000000000000000000000116 /* TransactionCandidateParser.swift in Sources */,
 				000000000000000000000117 /* OCRTransactionReviewStore.swift in Sources */,

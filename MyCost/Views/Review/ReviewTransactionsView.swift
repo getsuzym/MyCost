@@ -14,6 +14,7 @@ enum CategorySuggestionRowState: Equatable {
 
 struct ReviewTransactionsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
 
     @Query(sort: \Category.sortOrder) private var categories: [Category]
@@ -99,11 +100,17 @@ struct ReviewTransactionsView: View {
             }
         }
         .navigationTitle("Review")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save", action: saveApprovedTransactions)
                     .disabled(ocrReviewStore.importableSelectedCount == 0 || hasInvalidSelectedDrafts)
                     .accessibilityIdentifier("review.saveApproved")
+            }
+            ToolbarItem(placement: .cancellationAction) {
+                // Leaving keeps the whole session — the banner brings you back.
+                Button("Close") { dismiss() }
+                    .accessibilityIdentifier("review.close")
             }
             ToolbarItem(placement: .topBarLeading) {
                 if !ocrReviewStore.drafts.isEmpty {
@@ -232,7 +239,7 @@ struct ReviewTransactionsView: View {
     private var ocrResultsSection: some View {
         Section {
             if ocrReviewStore.drafts.isEmpty {
-                Text("No OCR transactions. Import screenshots from the Import tab.")
+                Text("No transactions in this review. Start an import from the Dashboard.")
                     .foregroundStyle(.secondary)
             }
             ForEach($ocrReviewStore.drafts) { $draft in
@@ -342,10 +349,11 @@ struct ReviewTransactionsView: View {
         }
         saveMessage = parts.joined(separator: " ")
 
-        // Nothing left to review — end the session so the batch banner and
-        // retained thumbnails are released.
+        // Nothing left to review — end the session (releases the banner and the
+        // retained thumbnails) and close the Review sheet.
         if ocrReviewStore.drafts.isEmpty {
             ocrReviewStore.clear()
+            dismiss()
         }
     }
 
