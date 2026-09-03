@@ -3232,6 +3232,24 @@ final class MyCostTests: XCTestCase {
         )
     }
 
+    func testEveryMatchTypeComparesCaseInsensitively() {
+        let service = MerchantRuleService()
+
+        // Rule text and transaction text disagree on case in both directions.
+        let exact = MerchantRule(matchText: "Cafe Medina", displayName: "Cafe Medina", matchType: .exact)
+        XCTAssertTrue(service.matches(exact, merchantName: "CAFE MEDINA", originalDescription: "cafe medina"))
+        XCTAssertTrue(service.matches(exact, merchantName: "cafe medina", originalDescription: ""))
+
+        let contains = MerchantRule(matchText: "netflix", displayName: "Netflix", matchType: .contains)
+        XCTAssertTrue(service.matches(contains, merchantName: "PAYPAL *NETFLIX.COM", originalDescription: "PAYPAL *NETFLIX.COM"))
+
+        let startsWith = MerchantRule(matchText: "SQ *CAFE", displayName: "Cafe", matchType: .startsWith)
+        XCTAssertTrue(service.matches(startsWith, merchantName: "sq *cafe medina vancouver", originalDescription: "sq *cafe medina vancouver"))
+
+        let endsWith = MerchantRule(matchText: "supermarket", displayName: "T&T", matchType: .endsWith)
+        XCTAssertTrue(service.matches(endsWith, merchantName: "PURCHASE T&T SUPERMARKET", originalDescription: "PURCHASE T&T SUPERMARKET"))
+    }
+
     func testMatchingIsCaseInsensitiveAndWhitespaceNormalized() {
         let rule = MerchantRule(matchText: "  uber   eats ", displayName: "Uber Eats", matchType: .contains)
         let match = MerchantRuleService().bestRule(
