@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 
 enum OCRReviewField {
     case account
@@ -32,6 +33,8 @@ struct OCRTransactionDraft: Identifiable, Equatable {
     let originalOCRText: String
     let validationFlags: Set<TransactionCandidateValidationFlag>
     let confidence: TransactionCandidateFieldConfidences
+    /// The screenshot this draft was detected from (batch import).
+    let sourceScreenshotID: UUID?
 
     var accountName: String
     var transactionDate: Date
@@ -52,6 +55,7 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         originalOCRText = candidate.originalOCRText
         validationFlags = candidate.validationFlags
         confidence = candidate.confidence
+        sourceScreenshotID = candidate.sourceScreenshotID
         accountName = "Default"
         transactionDate = candidate.detectedDate ?? referenceDate
         merchantName = candidate.rawMerchantDescription
@@ -128,8 +132,26 @@ struct OCRTransactionDraft: Identifiable, Equatable {
     }
 }
 
+/// Summary of the batch that produced the current review session, so the
+/// Review screen can show "18 transactions detected from 5 screenshots" and
+/// name any screenshots that failed to process.
+struct OCRBatchSessionInfo: Equatable {
+    var screenshotCount: Int = 0
+    var failedScreenshots: [String] = []
+
+    var isBatch: Bool { screenshotCount > 1 || !failedScreenshots.isEmpty }
+}
+
 final class OCRTransactionReviewStore: ObservableObject {
     @Published var drafts: [OCRTransactionDraft] = []
+
+    /// Downscaled preview images keyed by `sourceScreenshotID`, so the Review
+    /// screen can show which screenshot a transaction came from. Full-resolution
+    /// images are never retained here.
+    @Published private(set) var sourceThumbnails: [UUID: UIImage] = [:]
+
+    /// Metadata about the batch import that produced `drafts`.
+    @Published private(set) var batchInfo = OCRBatchSessionInfo()
 
     var selectedCount: Int {
         drafts.filter(\.isSelected).count
@@ -152,6 +174,38 @@ final class OCRTransactionReviewStore: ObservableObject {
             }
             return draft
         }
+    }
+
+    /// Installs the results of a batch screenshot import as one review session:
+    /// the combined candidates (already tagged with `sourceScreenshotID`), the
+    /// per-screenshot preview thumbnails, and the batch summary metadata.
+    func replaceBatch(
+        candidates: [TransactionCandidate],
+        thumbnails: [UUID: UIImage],
+        info: OCRBatchSessionInfo,
+        merchantRules: [MerchantRule],
+        referenceDate: Date = .now
+    ) {
+        replaceCandidates(candidates, merchantRules: merchantRules, referenceDate: referenceDate)
+        sourceThumbnails = thumbnails
+        batchInfo = info
+    }
+
+    func selectAll() {
+        for index in drafts.indices where drafts[index].canImport {
+            drafts[index].isSelected = true
+        }
+    }
+
+    func deselectAll() {
+        for index in drafts.indices {
+            drafts[index].isSelected = false
+        }
+    }
+
+    func sourceThumbnail(for draft: OCRTransactionDraft) -> UIImage? {
+        guard let id = draft.sourceScreenshotID else { return nil }
+        return sourceThumbnails[id]
     }
 
     func removeDraft(id: UUID) {
@@ -189,5 +243,7 @@ final class OCRTransactionReviewStore: ObservableObject {
 
     func clear() {
         drafts = []
+        sourceThumbnails = [:]
+        batchInfo = OCRBatchSessionInfo()
     }
 }

@@ -55,6 +55,10 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
     var validationFlags: Set<TransactionCandidateValidationFlag>
     /// Present when the candidate came from spatial grouping.
     var observations: [TransactionCandidateObservation]
+    /// Which screenshot in a batch produced this candidate — kept so the user
+    /// can view the source image during review and so duplicates across
+    /// overlapping screenshots can be traced.
+    var sourceScreenshotID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -66,7 +70,8 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
         sourceText: String,
         confidence: TransactionCandidateFieldConfidences,
         validationFlags: Set<TransactionCandidateValidationFlag>,
-        observations: [TransactionCandidateObservation] = []
+        observations: [TransactionCandidateObservation] = [],
+        sourceScreenshotID: UUID? = nil
     ) {
         self.id = id
         self.detectedDate = detectedDate
@@ -78,6 +83,7 @@ struct TransactionCandidate: Identifiable, Codable, Equatable {
         self.confidence = confidence
         self.validationFlags = validationFlags
         self.observations = observations
+        self.sourceScreenshotID = sourceScreenshotID
     }
 }
 

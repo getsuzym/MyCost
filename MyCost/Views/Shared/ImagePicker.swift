@@ -15,18 +15,24 @@ enum ImagePickerError: LocalizedError, Equatable {
     }
 }
 
-struct PickedImage {
+struct PickedImage: Identifiable {
+    let id = UUID()
     let image: UIImage
 }
 
+/// Multi-select photo picker. `selectionLimit = 0` allows any number of
+/// screenshots; the results are delivered in the order the user picked them.
+/// If some items fail to load the rest are still returned, along with the
+/// first load error so the caller can tell the user.
 struct ImagePicker: UIViewControllerRepresentable {
-    let onResult: (Result<PickedImage, ImagePickerError>) -> Void
+    var selectionLimit: Int = 0
+    let onResult: (Result<[PickedImage], ImagePickerError>) -> Void
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
-        configuration.selectionLimit = 1
+        configuration.selectionLimit = selectionLimit
 
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = context.coordinator
@@ -40,11 +46,11 @@ struct ImagePicker: UIViewControllerRepresentable {
     }
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        private let onResult: (Result<PickedImage, ImagePickerError>) -> Void
+        private let onResult: (Result<[PickedImage], ImagePickerError>) -> Void
         private let onCancel: () -> Void
 
         init(
-            onResult: @escaping (Result<PickedImage, ImagePickerError>) -> Void,
+            onResult: @escaping (Result<[PickedImage], ImagePickerError>) -> Void,
             onCancel: @escaping () -> Void
         ) {
             self.onResult = onResult
@@ -54,32 +60,49 @@ struct ImagePicker: UIViewControllerRepresentable {
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
 
-            guard let provider = results.first?.itemProvider else {
+            guard !results.isEmpty else {
                 onCancel()
                 return
             }
 
-            guard provider.canLoadObject(ofClass: UIImage.self) else {
-                onResult(.failure(.noImageData))
-                return
+            let providers = results.map(\.itemProvider)
+            var loaded = [Int: UIImage]()
+            var firstError: String?
+            let group = DispatchGroup()
+            let lock = NSLock()
+
+            for (index, provider) in providers.enumerated() {
+                guard provider.canLoadObject(ofClass: UIImage.self) else {
+                    lock.lock(); firstError = firstError ?? "One item was not a readable image."; lock.unlock()
+                    continue
+                }
+                group.enter()
+                provider.loadObject(ofClass: UIImage.self) { object, error in
+                    lock.lock()
+                    if let image = object as? UIImage {
+                        loaded[index] = image
+                    } else if let error {
+                        firstError = firstError ?? error.localizedDescription
+                    } else {
+                        firstError = firstError ?? "One item did not contain a readable image."
+                    }
+                    lock.unlock()
+                    group.leave()
+                }
             }
 
-            provider.loadObject(ofClass: UIImage.self) { [onResult] object, error in
-                DispatchQueue.main.async {
-                    if let error {
-                        onResult(.failure(.loadingFailed(error.localizedDescription)))
-                        return
+            group.notify(queue: .main) { [onResult, onCancel] in
+                let ordered = loaded.keys.sorted().map { PickedImage(image: loaded[$0]!) }
+                if ordered.isEmpty {
+                    if let firstError {
+                        onResult(.failure(.loadingFailed(firstError)))
+                    } else {
+                        onCancel()
                     }
-
-                    guard let image = object as? UIImage else {
-                        onResult(.failure(.noImageData))
-                        return
-                    }
-
-                    onResult(.success(PickedImage(image: image)))
+                    return
                 }
+                onResult(.success(ordered))
             }
         }
     }
 }
-

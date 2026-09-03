@@ -55,6 +55,7 @@
 		00000000000000000000012E /* Array+SafeIndexing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000002F /* Array+SafeIndexing.swift */; };
 		00000000000000000000012F /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000030 /* ToastCenter.swift */; };
 		000000000000000000000130 /* ToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000031 /* ToastView.swift */; };
+		000000000000000000000131 /* ScreenshotBatchImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000032 /* ScreenshotBatchImportService.swift */; };
 		0000000000000000000009A4 /* MyCostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009A3 /* MyCostTests.swift */; };
 		0000000000000000000009B4 /* MyCostUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009B3 /* MyCostUITests.swift */; };
 /* End PBXBuildFile section */
@@ -109,6 +110,7 @@
 		00000000000000000000002F /* Array+SafeIndexing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Array+SafeIndexing.swift"; sourceTree = "<group>"; };
 		000000000000000000000030 /* ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastCenter.swift; sourceTree = "<group>"; };
 		000000000000000000000031 /* ToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastView.swift; sourceTree = "<group>"; };
+		000000000000000000000032 /* ScreenshotBatchImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotBatchImportService.swift; sourceTree = "<group>"; };
 		8A26197730479CE900C9C94A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0000000000000000000009A2 /* MyCostTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyCostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0000000000000000000009A3 /* MyCostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyCostTests.swift; sourceTree = "<group>"; };
@@ -207,6 +209,7 @@
 				000000000000000000000006 /* SeedDataService.swift */,
 				000000000000000000000007 /* DuplicateDetector.swift */,
 				000000000000000000000008 /* ScreenshotImportService.swift */,
+				000000000000000000000032 /* ScreenshotBatchImportService.swift */,
 				000000000000000000000015 /* VisionOCRService.swift */,
 				000000000000000000000017 /* TransactionCandidateParser.swift */,
 				000000000000000000000018 /* OCRTransactionReviewStore.swift */,
@@ -473,6 +476,7 @@
 				000000000000000000000106 /* SeedDataService.swift in Sources */,
 				000000000000000000000107 /* DuplicateDetector.swift in Sources */,
 				000000000000000000000108 /* ScreenshotImportService.swift in Sources */,
+				000000000000000000000131 /* ScreenshotBatchImportService.swift in Sources */,
 				000000000000000000000114 /* VisionOCRService.swift in Sources */,
 				000000000000000000000116 /* TransactionCandidateParser.swift in Sources */,
 				000000000000000000000117 /* OCRTransactionReviewStore.swift in Sources */,

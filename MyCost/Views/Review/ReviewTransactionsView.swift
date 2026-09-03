@@ -1,6 +1,11 @@
 import SwiftData
 import SwiftUI
 
+/// Wraps a bare `UUID` so it can drive `.sheet(item:)`.
+private struct IdentifiedUUID: Identifiable {
+    let id: UUID
+}
+
 /// Per-row state for the optional AI categorization fallback.
 enum AICategorizationRowState: Equatable {
     case loading
@@ -21,6 +26,7 @@ struct ReviewTransactionsView: View {
     @State private var saveMessage: String?
     @State private var importError: String?
     @State private var aiRowStates: [UUID: AICategorizationRowState] = [:]
+    @State private var sourcePreviewID: UUID?
     private let merchantRuleService = MerchantRuleService()
     private let importService = OCRTransactionImportService()
     private let aiProviderService = AIProviderService()
@@ -41,9 +47,28 @@ struct ReviewTransactionsView: View {
         selectedDrafts.contains { !$0.canImport }
     }
 
+    private var batchSummaryText: String {
+        let info = ocrReviewStore.batchInfo
+        let txns = ocrReviewStore.drafts.count
+        let shots = info.screenshotCount
+        return "\(txns) transaction\(txns == 1 ? "" : "s") from \(shots) screenshot\(shots == 1 ? "" : "s")"
+    }
+
     var body: some View {
         let dups = possibleDuplicates
         return List {
+            if ocrReviewStore.batchInfo.isBatch {
+                Section {
+                    Label(batchSummaryText, systemImage: "square.stack.3d.up")
+                        .font(.callout)
+                    if !ocrReviewStore.batchInfo.failedScreenshots.isEmpty {
+                        Text("Couldn\u{2019}t read: \(ocrReviewStore.batchInfo.failedScreenshots.joined(separator: ", ")).")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
             ocrResultsSection
 
             Section("Possible Duplicates") {
@@ -66,11 +91,51 @@ struct ReviewTransactionsView: View {
                     .disabled(ocrReviewStore.importableSelectedCount == 0 || hasInvalidSelectedDrafts)
                     .accessibilityIdentifier("review.saveApproved")
             }
+            ToolbarItem(placement: .topBarLeading) {
+                if !ocrReviewStore.drafts.isEmpty {
+                    Menu {
+                        Button("Select All") { ocrReviewStore.selectAll() }
+                            .accessibilityIdentifier("review.selectAll")
+                        Button("Deselect All") { ocrReviewStore.deselectAll() }
+                            .accessibilityIdentifier("review.deselectAll")
+                    } label: {
+                        Label("Selection", systemImage: "checklist")
+                    }
+                    .accessibilityIdentifier("review.selectionMenu")
+                }
+            }
+        }
+        .sheet(item: Binding(get: { sourcePreviewID.map(IdentifiedUUID.init) }, set: { sourcePreviewID = $0?.id })) { wrapper in
+            sourcePreview(for: wrapper.id)
         }
         .alert("Import failed", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(importError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func sourcePreview(for screenshotID: UUID) -> some View {
+        NavigationStack {
+            Group {
+                if let image = ocrReviewStore.sourceThumbnails[screenshotID] {
+                    ScrollView([.horizontal, .vertical]) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                    }
+                } else {
+                    ContentUnavailableView("Source screenshot unavailable", systemImage: "photo")
+                }
+            }
+            .navigationTitle("Source Screenshot")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { sourcePreviewID = nil }
+                }
+            }
         }
     }
 
@@ -87,6 +152,10 @@ struct ReviewTransactionsView: View {
                     categories: categories,
                     aiState: aiRowStates[draft.id],
                     canAskAI: isAIConnected,
+                    hasSourceScreenshot: draft.sourceScreenshotID.map { ocrReviewStore.sourceThumbnails[$0] != nil } ?? false,
+                    onViewSource: {
+                        if let id = draft.sourceScreenshotID { sourcePreviewID = id }
+                    },
                     onRemove: {
                         ocrReviewStore.removeDraft(id: draft.id)
                         aiRowStates[draft.id] = nil
@@ -141,15 +210,27 @@ struct ReviewTransactionsView: View {
             modelContext: modelContext
         )
 
+        let isBatch = ocrReviewStore.batchInfo.isBatch
+
         if let error = outcome.saveError {
             importError = "\(error)\n\nNothing was imported. Your drafts are still here — try again."
             saveMessage = nil
-            ToastCenter.shared.show(CRUDFeedback.result(.add, "transaction", count: draftsToImport.count, persisted: false))
+            // State is preserved (drafts + thumbnails untouched) so the user can
+            // retry without re-selecting screenshots.
+            ToastCenter.shared.show(
+                isBatch
+                    ? CRUDFeedback.batchImportResult(added: draftsToImport.count, duplicatesSkipped: scan.blockedCount, persisted: false)
+                    : CRUDFeedback.result(.add, "transaction", count: draftsToImport.count, persisted: false)
+            )
             return
         }
 
         ocrReviewStore.removeDrafts(ids: Set(draftsToImport.map(\.id)))
-        ToastCenter.shared.show(CRUDFeedback.result(.add, "transaction", count: outcome.importedCount, persisted: true))
+        ToastCenter.shared.show(
+            isBatch
+                ? CRUDFeedback.batchImportResult(added: outcome.importedCount, duplicatesSkipped: scan.blockedCount, persisted: true)
+                : CRUDFeedback.result(.add, "transaction", count: outcome.importedCount, persisted: true)
+        )
         var parts = ["Saved \(outcome.importedCount) transaction\(outcome.importedCount == 1 ? "" : "s") — \(outcome.persistedTransactionCount) now in your history."]
         if scan.blockedCount > 0 {
             parts.append("\(scan.blockedCount) high-confidence duplicate\(scan.blockedCount == 1 ? "" : "s") skipped.")
@@ -158,6 +239,12 @@ struct ReviewTransactionsView: View {
             parts.append("\(scan.mediumMatchCount) saved as possible duplicate\(scan.mediumMatchCount == 1 ? "" : "s") — review under Possible Duplicates.")
         }
         saveMessage = parts.joined(separator: " ")
+
+        // Nothing left to review — end the session so the batch banner and
+        // retained thumbnails are released.
+        if ocrReviewStore.drafts.isEmpty {
+            ocrReviewStore.clear()
+        }
     }
 
     // MARK: - AI fallback
@@ -241,6 +328,8 @@ private struct OCRTransactionDraftRow: View {
     let categories: [Category]
     let aiState: AICategorizationRowState?
     let canAskAI: Bool
+    let hasSourceScreenshot: Bool
+    let onViewSource: () -> Void
     let onRemove: () -> Void
     let onAskAI: () -> Void
     let onAcceptSuggestion: (MerchantClassification) -> Void
@@ -253,6 +342,14 @@ private struct OCRTransactionDraftRow: View {
                     .accessibilityIdentifier("review.importToggle")
 
                 Spacer()
+
+                if hasSourceScreenshot {
+                    Button(action: onViewSource) {
+                        Label("Source", systemImage: "photo")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("review.viewSource")
+                }
 
                 Button(role: .destructive, action: onRemove) {
                     Label("Remove", systemImage: "trash")

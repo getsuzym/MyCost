@@ -1,4 +1,5 @@
 import SwiftData
+import UIKit
 import XCTest
 @testable import MyCost
 
@@ -2234,6 +2235,326 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(provider.callCount, 1)
     }
 
+    // MARK: - Batch multi-screenshot import
+
+    private func batchCandidate(
+        _ merchant: String,
+        amount: Decimal,
+        on day: Date,
+        status: TransactionCandidateStatus? = .posted
+    ) -> TransactionCandidate {
+        TransactionCandidate(
+            detectedDate: day,
+            rawMerchantDescription: merchant,
+            amount: amount,
+            status: status,
+            originalOCRText: "\(merchant) \(amount)",
+            sourceText: "\(merchant) \(amount)",
+            confidence: TransactionCandidateFieldConfidences(date: 0.95, merchantDescription: 0.9, amount: 0.95, status: 0.95),
+            validationFlags: []
+        )
+    }
+
+    private func selectedDrafts(from candidates: [TransactionCandidate]) -> [OCRTransactionDraft] {
+        candidates.map { candidate in
+            var made = OCRTransactionDraft(candidate: candidate, referenceDate: date(2026, 8, 31))
+            made.isSelected = true
+            return made
+        }
+    }
+
+    func testBatchImportSingleScreenshotTagsCandidatesAndReportsCounts() async {
+        let ref = date(2026, 8, 31)
+        let shotID = UUID()
+        let stub = StubSingleScreenshotProcessor([.success([batchCandidate("Corner Market", amount: 40, on: date(2026, 8, 3))])])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([BatchScreenshotInput(id: shotID, image: UIImage())])
+
+        XCTAssertEqual(stub.callCount, 1)
+        XCTAssertEqual(result.candidates.count, 1)
+        XCTAssertEqual(result.candidates.first?.sourceScreenshotID, shotID)
+        XCTAssertEqual(result.succeededScreenshotCount, 1)
+        XCTAssertEqual(result.attemptedScreenshotCount, 1)
+        XCTAssertTrue(result.failures.isEmpty)
+        XCTAssertEqual(result.summaryMessage, "1 transaction detected from 1 screenshot.")
+    }
+
+    func testBatchImportMultipleScreenshotsCombinePreservingSourceAndOrder() async {
+        let ref = date(2026, 8, 31)
+        let a = UUID(); let b = UUID()
+        let stub = StubSingleScreenshotProcessor([
+            .success([batchCandidate("Alpha", amount: 10, on: date(2026, 8, 2))]),
+            .success([
+                batchCandidate("Bravo", amount: 20, on: date(2026, 8, 3)),
+                batchCandidate("Charlie", amount: 30, on: date(2026, 8, 4))
+            ])
+        ])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([
+            BatchScreenshotInput(id: a, image: UIImage()),
+            BatchScreenshotInput(id: b, image: UIImage())
+        ])
+
+        XCTAssertEqual(result.candidates.map(\.rawMerchantDescription), ["Alpha", "Bravo", "Charlie"])
+        XCTAssertEqual(result.candidates.map(\.sourceScreenshotID), [a, b, b])
+        XCTAssertEqual(result.succeededScreenshotCount, 2)
+        XCTAssertEqual(result.summaryMessage, "3 transactions detected from 2 screenshots.")
+        // Raw OCR text is never merged: each screenshot is parsed on its own with
+        // one shared reference date for consistent year inference.
+        XCTAssertEqual(stub.receivedReferenceDates, [ref, ref])
+    }
+
+    func testOverlappingScreenshotsDoNotImportTheSameTransactionTwice() async {
+        let ref = date(2026, 8, 31)
+        let repeated = { self.batchCandidate("Corner Market", amount: 21.45, on: self.date(2026, 8, 24), status: .posted) }
+        let stub = StubSingleScreenshotProcessor([
+            .success([batchCandidate("Cafe Roma", amount: 8, on: date(2026, 8, 23)), repeated()]),
+            .success([repeated(), batchCandidate("Bistro", amount: 25, on: date(2026, 8, 25))])
+        ])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([
+            BatchScreenshotInput(image: UIImage()),
+            BatchScreenshotInput(image: UIImage())
+        ])
+        XCTAssertEqual(result.candidates.count, 4)
+
+        let store = OCRTransactionReviewStore()
+        store.replaceBatch(
+            candidates: result.candidates,
+            thumbnails: result.thumbnails,
+            info: OCRBatchSessionInfo(screenshotCount: 2),
+            merchantRules: [],
+            referenceDate: result.referenceDate
+        )
+        let scan = store.flagDuplicates(existingTransactions: [])
+
+        XCTAssertEqual(scan.blockedCount, 1, "the repeated transaction is flagged once, not imported twice")
+        XCTAssertEqual(store.drafts.filter(\.isSelected).count, 3)
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            store.drafts.filter { $0.isSelected && $0.canImport },
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.importedCount, 3)
+    }
+
+    func testBatchImportKeepsTransactionsFromDifferentMonthsSeparate() async throws {
+        let ref = date(2026, 8, 31)
+        let stub = StubSingleScreenshotProcessor([
+            .success([batchCandidate("July Shop", amount: 50, on: date(2026, 7, 15))]),
+            .success([batchCandidate("Aug Shop", amount: 60, on: date(2026, 8, 15))])
+        ])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([
+            BatchScreenshotInput(image: UIImage()),
+            BatchScreenshotInput(image: UIImage())
+        ])
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            selectedDrafts(from: result.candidates),
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+
+        let history = try historyTransactions()
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 7, 15), transactions: history).total, 50)
+        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history).total, 60)
+    }
+
+    func testBatchImportContinuesWhenOneScreenshotFailsAndNamesIt() async {
+        let ref = date(2026, 8, 31)
+        let stub = StubSingleScreenshotProcessor([
+            .success([batchCandidate("Good One", amount: 10, on: date(2026, 8, 2))]),
+            .failure(ScreenshotImportError.noRecognizedText),
+            .success([batchCandidate("Good Two", amount: 20, on: date(2026, 8, 4))])
+        ])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process((0..<3).map { _ in BatchScreenshotInput(image: UIImage()) })
+
+        XCTAssertEqual(result.candidates.map(\.rawMerchantDescription), ["Good One", "Good Two"])
+        XCTAssertEqual(result.succeededScreenshotCount, 2)
+        XCTAssertEqual(result.failures.count, 1)
+        XCTAssertEqual(result.failures.first?.label, "Screenshot 2")
+        XCTAssertTrue(result.summaryMessage.contains("Screenshot 2"))
+        XCTAssertEqual(result.thumbnails.count, 3, "every screenshot gets a preview, even the one that failed")
+    }
+
+    func testSelectAllAndDeselectAllControlWhatGetsImported() throws {
+        let store = OCRTransactionReviewStore()
+        store.replaceCandidates([
+            batchCandidate("A", amount: 1, on: date(2026, 8, 1)),
+            batchCandidate("B", amount: 2, on: date(2026, 8, 2)),
+            batchCandidate("C", amount: 3, on: date(2026, 8, 3))
+        ], referenceDate: date(2026, 8, 31))
+
+        store.deselectAll()
+        XCTAssertEqual(store.selectedCount, 0)
+
+        store.drafts[0].isSelected = true
+        let outcome = OCRTransactionImportService().importDrafts(
+            store.drafts.filter { $0.isSelected && $0.canImport },
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.persistedTransactionCount, 1)
+        XCTAssertEqual(try historyTransactions().map(\.merchantName), ["A"])
+
+        store.selectAll()
+        XCTAssertEqual(store.selectedCount, 3)
+    }
+
+    func testRemovingAScreenshotBeforeProcessingExcludesItsTransactions() async {
+        let ref = date(2026, 8, 31)
+        let keep = UUID(); let removed = UUID()
+        var queued = [
+            BatchScreenshotInput(id: keep, image: UIImage()),
+            BatchScreenshotInput(id: removed, image: UIImage())
+        ]
+        queued.removeAll { $0.id == removed }
+
+        let stub = StubSingleScreenshotProcessor([.success([batchCandidate("Kept", amount: 10, on: date(2026, 8, 2))])])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process(queued)
+
+        XCTAssertEqual(stub.callCount, 1)
+        XCTAssertEqual(result.candidates.map(\.sourceScreenshotID), [keep])
+        XCTAssertNil(result.thumbnails[removed])
+    }
+
+    func testPendingTransactionSeenInTwoScreenshotsIsNotDoubleCounted() async {
+        let ref = date(2026, 8, 31)
+        let pending = { self.batchCandidate("Corner Market", amount: 12, on: self.date(2026, 8, 20), status: .pending) }
+        let stub = StubSingleScreenshotProcessor([.success([pending()]), .success([pending()])])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([
+            BatchScreenshotInput(image: UIImage()),
+            BatchScreenshotInput(image: UIImage())
+        ])
+
+        let store = OCRTransactionReviewStore()
+        store.replaceBatch(
+            candidates: result.candidates,
+            thumbnails: result.thumbnails,
+            info: OCRBatchSessionInfo(screenshotCount: 2),
+            merchantRules: [],
+            referenceDate: result.referenceDate
+        )
+        let scan = store.flagDuplicates(existingTransactions: [])
+        XCTAssertEqual(scan.blockedCount + scan.mediumMatchCount, 1, "the same pending transaction is not counted twice")
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            store.drafts.filter { $0.isSelected && $0.canImport },
+            categories: [], existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.importedCount, 1)
+    }
+
+    func testBatchDuplicateDetectionAgainstExistingStoredTransactions() async throws {
+        let ref = date(2026, 8, 31)
+        let existing = Transaction(
+            merchantName: "Corner Market", originalDescription: "Corner Market 21.45",
+            amount: 21.45, transactionDate: date(2026, 8, 24), status: .posted
+        )
+        context.insert(existing)
+        try context.save()
+
+        let stub = StubSingleScreenshotProcessor([.success([
+            batchCandidate("Corner Market", amount: 21.45, on: date(2026, 8, 24), status: .posted),
+            batchCandidate("New Cafe", amount: 9, on: date(2026, 8, 25))
+        ])])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([BatchScreenshotInput(image: UIImage())])
+
+        let store = OCRTransactionReviewStore()
+        store.replaceBatch(
+            candidates: result.candidates,
+            thumbnails: result.thumbnails,
+            info: OCRBatchSessionInfo(screenshotCount: 1),
+            merchantRules: [],
+            referenceDate: result.referenceDate
+        )
+        let scan = store.flagDuplicates(
+            existingTransactions: try historyTransactions().map(DuplicateTransactionSnapshot.init(transaction:))
+        )
+        XCTAssertEqual(scan.blockedCount, 1)
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            store.drafts.filter { $0.isSelected && $0.canImport },
+            categories: [], existingTransactions: try historyTransactions(), existingRules: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.importedCount, 1)
+        XCTAssertEqual(Set(try historyTransactions().map(\.merchantName)), ["Corner Market", "New Cafe"])
+    }
+
+    func testBatchImportConfirmationCountStrings() {
+        XCTAssertEqual(
+            CRUDFeedback.batchImportResult(added: 14, duplicatesSkipped: 0, persisted: true).message,
+            "14 transactions added"
+        )
+        XCTAssertEqual(
+            CRUDFeedback.batchImportResult(added: 14, duplicatesSkipped: 3, persisted: true).message,
+            "14 transactions added \u{00B7} 3 duplicates skipped"
+        )
+        XCTAssertEqual(
+            CRUDFeedback.batchImportResult(added: 1, duplicatesSkipped: 1, persisted: true).message,
+            "1 transaction added \u{00B7} 1 duplicate skipped"
+        )
+        XCTAssertEqual(CRUDFeedback.batchImportResult(added: 5, duplicatesSkipped: 2, persisted: false).style, .error)
+    }
+
+    func testEndToEndBatchImportReportsAddedAndSkippedCounts() async throws {
+        let ref = date(2026, 8, 31)
+        let existing = Transaction(
+            merchantName: "Old Shop", originalDescription: "Old Shop 5",
+            amount: 5, transactionDate: date(2026, 8, 10), status: .posted
+        )
+        context.insert(existing)
+        try context.save()
+
+        let duplicateOfExisting = batchCandidate("Old Shop", amount: 5, on: date(2026, 8, 10), status: .posted)
+        let stub = StubSingleScreenshotProcessor([
+            .success([batchCandidate("Fresh A", amount: 11, on: date(2026, 8, 11)), duplicateOfExisting]),
+            .success([batchCandidate("Fresh B", amount: 12, on: date(2026, 8, 12))])
+        ])
+        let service = ScreenshotBatchImportService(importService: stub, now: { ref })
+
+        let result = await service.process([
+            BatchScreenshotInput(image: UIImage()),
+            BatchScreenshotInput(image: UIImage())
+        ])
+
+        let store = OCRTransactionReviewStore()
+        store.replaceBatch(
+            candidates: result.candidates,
+            thumbnails: result.thumbnails,
+            info: OCRBatchSessionInfo(screenshotCount: result.succeededScreenshotCount),
+            merchantRules: [],
+            referenceDate: result.referenceDate
+        )
+        let scan = store.flagDuplicates(
+            existingTransactions: try historyTransactions().map(DuplicateTransactionSnapshot.init(transaction:))
+        )
+        let outcome = OCRTransactionImportService().importDrafts(
+            store.drafts.filter { $0.isSelected && $0.canImport },
+            categories: [], existingTransactions: try historyTransactions(), existingRules: [], modelContext: context
+        )
+
+        let toast = CRUDFeedback.batchImportResult(
+            added: outcome.importedCount,
+            duplicatesSkipped: scan.blockedCount,
+            persisted: outcome.saveError == nil
+        )
+        XCTAssertEqual(toast.message, "2 transactions added \u{00B7} 1 duplicate skipped")
+        XCTAssertEqual(Set(try historyTransactions().map(\.merchantName)), ["Old Shop", "Fresh A", "Fresh B"])
+    }
+
         private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }
@@ -2303,4 +2624,34 @@ final class FakeAIClassificationProvider: AIClassificationProvider, @unchecked S
 
 final class CapturedRequestBox: @unchecked Sendable {
     var request: URLRequest?
+}
+
+/// Canned single-screenshot processor for `ScreenshotBatchImportService` tests:
+/// one `Result` per expected `processScreenshot` call, in order. `.failure`
+/// simulates a screenshot the OCR pipeline can't read.
+final class StubSingleScreenshotProcessor: SingleScreenshotProcessing, @unchecked Sendable {
+    private let outcomes: [Result<[TransactionCandidate], Error>]
+    private(set) var callCount = 0
+    private(set) var receivedReferenceDates: [Date?] = []
+
+    init(_ outcomes: [Result<[TransactionCandidate], Error>]) {
+        self.outcomes = outcomes
+    }
+
+    func processScreenshot(_ image: UIImage, referenceDateOverride: Date?) async throws -> ScreenshotImportResult {
+        let index = callCount
+        callCount += 1
+        receivedReferenceDates.append(referenceDateOverride)
+        let outcome = index < outcomes.count ? outcomes[index] : .success([])
+        let candidates = try outcome.get()
+        return ScreenshotImportResult(
+            imageSize: .zero,
+            recognizedTextBlocks: [],
+            observations: [],
+            regions: [],
+            transactionCandidates: candidates,
+            usedSpatialGrouping: true,
+            referenceDate: referenceDateOverride ?? .now
+        )
+    }
 }

@@ -95,6 +95,19 @@ enum CRUDFeedback {
         return Toast(message: message, style: .success)
     }
 
+    /// Confirmation for a batch screenshot import:
+    /// "14 transactions added" or "14 transactions added · 3 duplicates skipped".
+    static func batchImportResult(added: Int, duplicatesSkipped: Int, persisted: Bool) -> Toast {
+        guard persisted else {
+            return Toast(message: saveFailure("transaction"), style: .error)
+        }
+        var message = added == 1 ? "1 transaction added" : "\(added) transactions added"
+        if duplicatesSkipped > 0 {
+            message += " \u{00B7} \(duplicatesSkipped) duplicate\(duplicatesSkipped == 1 ? "" : "s") skipped"
+        }
+        return Toast(message: message, style: .success)
+    }
+
     static func added(_ noun: String, count: Int = 1) -> String {
         count == 1 ? "\(noun.capitalizedFirst) added" : "\(count) \(noun)s added"
     }

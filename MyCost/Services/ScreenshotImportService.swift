@@ -54,7 +54,10 @@ struct ScreenshotImportService {
         self.now = now
     }
 
-    func processScreenshot(_ image: UIImage) async throws -> ScreenshotImportResult {
+    /// - Parameter referenceDateOverride: when a batch of screenshots is
+    ///   processed together, pass one shared date so an undated "Aug 28" lands
+    ///   in the same year across every screenshot. Defaults to `now()`.
+    func processScreenshot(_ image: UIImage, referenceDateOverride: Date? = nil) async throws -> ScreenshotImportResult {
         do {
             let textBlocks = try await ocrService.recognizeText(in: image)
             guard !textBlocks.isEmpty else {
@@ -64,7 +67,7 @@ struct ScreenshotImportService {
             // One reference date for the whole extraction so a screenshot date
             // with no year ("Aug 28") is consistently placed in the current
             // statement year everywhere it's parsed.
-            let referenceDate = now()
+            let referenceDate = referenceDateOverride ?? now()
             let grouper = TransactionGrouper(referenceDate: referenceDate)
             let flatParser = TransactionCandidateParser(referenceDate: referenceDate)
 
