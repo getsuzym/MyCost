@@ -13,6 +13,8 @@ struct DashboardView: View {
     /// Which month the dashboard is showing. Starts at the current month; the
     /// user can step back to see an imported historical statement.
     @State private var monthAnchor = Date()
+    /// The "Months" list is collapsed by default and remembers its state.
+    @AppStorage("dashboard.monthsExpanded") private var monthsExpanded = false
 
     private let analytics = SpendingAnalytics()
     private let monthly = MonthlyTransactionsService()
@@ -133,26 +135,40 @@ struct DashboardView: View {
                 )
             }
 
-            Section("Months") {
+            Section {
                 if months.isEmpty {
                     Text("No transactions yet.")
                         .foregroundStyle(.secondary)
-                }
-                ForEach(months, id: \.self) { monthStart in
-                    NavigationLink {
-                        MonthDetailView(month: monthStart)
+                } else {
+                    DisclosureGroup(isExpanded: $monthsExpanded) {
+                        ForEach(months, id: \.self) { monthStart in
+                            NavigationLink {
+                                MonthDetailView(month: monthStart)
+                            } label: {
+                                let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
+                                let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+                                HStack {
+                                    Text(Formatters.month.string(from: monthStart))
+                                    Spacer()
+                                    Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
                     } label: {
-                        let monthTx = monthly.transactions(inMonthContaining: monthStart, from: transactions)
-                        let monthTotal = monthTx.filter { !$0.isExcluded }.reduce(Decimal.zero) { $0 + $1.spendingAmount }
                         HStack {
-                            Text(Formatters.month.string(from: monthStart))
+                            Text("All Months")
                             Spacer()
-                            Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
+                            Text("\(months.count)")
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
+                        .accessibilityIdentifier("dashboard.monthsDisclosure")
                     }
                 }
+            } header: {
+                Text("Months")
             }
         }
         .navigationTitle("Dashboard")
