@@ -123,11 +123,16 @@ struct TransactionNormalizer {
 
     // MARK: Keyword cues
 
+    /// Deliberately narrow: only phrasings that clearly mean "a credit-card
+    /// balance was paid off" (or its French form). A generic "bill payment",
+    /// "pre-authorized payment", "autopay", or "e-transfer to <person>" is a
+    /// real recurring expense (a phone bill, a mortgage, rent) and must **not**
+    /// be zeroed out.
     private static let paymentKeywords = [
         "payment thank you", "payment - thank you", "thank you for your payment",
-        "autopay", "auto pay", "bill payment", "bill pay", "online payment",
-        "e-transfer to", "transfer to", "pmt received", "payment received",
-        "paiement", "merci", "pre-authorized payment"
+        "paiement - merci", "merci de votre paiement", "paiement recu - merci",
+        "credit card payment", "cc payment", "payment received - thank",
+        "pmt received - thank"
     ]
 
     private static let refundKeywords = [

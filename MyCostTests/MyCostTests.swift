@@ -2440,6 +2440,100 @@ final class MyCostTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(history.first { $0.merchantName == "PAYROLL DEPOSIT" }).countsAsSpending)
     }
 
+    // MARK: - Recurring totals honor the user's mark over a fuzzy sign guess
+
+    func testGenericBillAndPreAuthPaymentsAreSpendingNotBalancePayoffs() {
+        let n = TransactionNormalizer()
+        for desc in ["Bill Payment BELL MOBILITY", "PRE-AUTHORIZED PAYMENT MORTGAGE", "AUTOPAY GYM", "e-Transfer sent linlin"] {
+            XCTAssertTrue(n.normalize(originalAmount: -51.52, accountType: .debit, description: desc).countsAsSpending,
+                          "\(desc) on debit should count as spending")
+            XCTAssertTrue(n.normalize(originalAmount: -51.52, accountType: .other, description: desc).countsAsSpending,
+                          "\(desc) on 'other' should count as spending")
+        }
+    }
+
+    func testCreditCardBalancePayoffStillDoesNotCount() {
+        let n = TransactionNormalizer()
+        for desc in ["PAYMENT - THANK YOU", "Thank you for your payment", "CREDIT CARD PAYMENT"] {
+            XCTAssertFalse(n.normalize(originalAmount: -1200, accountType: .creditCard, description: desc).countsAsSpending,
+                           "\(desc) is a card payoff, not spending")
+        }
+    }
+
+    func testUserMarkedRecurringCountsEvenWhenTheSignNormalizerZeroedIt() throws {
+        let housing = makeCategory("Housing", sortOrder: 0)
+        // Imported from a screenshot where +877.67 landed on a chequing account
+        // with no minus → the normalizer reads it as a deposit → not spending.
+        let normalized = TransactionNormalizer().normalize(originalAmount: 877.67, accountType: .debit, description: "Mortgage payment")
+        XCTAssertFalse(normalized.countsAsSpending)
+        XCTAssertTrue(normalized.needsReview)
+
+        let mortgage = Transaction(
+            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
+            amount: 877.67, transactionDate: date(2026, 8, 7), category: housing
+        )
+        mortgage.applyNormalization(normalized, accountType: .debit)
+        context.insert(mortgage)
+        XCTAssertFalse(mortgage.contributesToSpending)
+        XCTAssertEqual(mortgage.spendingAmount, 0)
+
+        mortgage.isRecurring = true
+        try context.save()
+
+        XCTAssertTrue(mortgage.contributesToSpending)
+        XCTAssertEqual(mortgage.spendingAmount, abs(mortgage.amount))
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.recurringTotal, abs(mortgage.amount))
+        XCTAssertEqual(summary.total, abs(mortgage.amount))
+    }
+
+    func testRecurringTotalMatchesTheSumOfEveryRecurringRow() throws {
+        let subs = makeCategory("Subscriptions", sortOrder: 0)
+        let housing = makeCategory("Housing", sortOrder: 1)
+
+        let clean = insertTransaction("Mortgage payment", amount: 877.67, on: date(2026, 8, 21), category: housing)
+        clean.isRecurring = true
+
+        let zeroed = Transaction(
+            merchantName: "Mortgage payment", originalDescription: "Mortgage payment",
+            amount: 877.67, transactionDate: date(2026, 8, 7), category: housing
+        )
+        zeroed.applyNormalization(
+            TransactionNormalizer().normalize(originalAmount: 877.67, accountType: .debit, description: "Mortgage payment"),
+            accountType: .debit
+        )
+        zeroed.isRecurring = true
+        context.insert(zeroed)
+
+        let yt = insertTransaction("GOOGLE*YOUTUBEPREMIUM", amount: 25.75, on: date(2026, 8, 29), category: subs)
+        yt.isRecurring = true
+        try context.save()
+
+        let rows = try allTransactions().filter { $0.isRecurring && !$0.isExcluded }
+        let visibleSum = rows.reduce(Decimal.zero) { $0 + abs($1.amount) }
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, visibleSum)
+    }
+
+    func testConfidentIncomeMarkedRecurringIsNotRescued() throws {
+        let cat = makeCategory("Income", sortOrder: 0)
+        let payroll = Transaction(
+            merchantName: "PAYROLL DIRECT DEPOSIT", originalDescription: "PAYROLL DIRECT DEPOSIT",
+            amount: 2000, transactionDate: date(2026, 8, 15), category: cat
+        )
+        payroll.applyNormalization(
+            TransactionNormalizer().normalize(originalAmount: 2000, accountType: .debit, description: "PAYROLL DIRECT DEPOSIT"),
+            accountType: .debit
+        )
+        payroll.isRecurring = true // user (wrongly) marks a deposit recurring
+        context.insert(payroll)
+        try context.save()
+
+        XCTAssertFalse(payroll.needsDirectionReview) // the normalizer was confident
+        XCTAssertFalse(payroll.contributesToSpending)
+        XCTAssertEqual(payroll.spendingAmount, 0)
+        XCTAssertEqual(try summaryFor(date(2026, 8, 15)).recurringTotal, 0)
+    }
+
     // MARK: - Category drill-down
 
     /// Mirrors CategoryDetailView's filter: month window + category name.

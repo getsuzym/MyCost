@@ -142,11 +142,13 @@ private struct MonthListRow: View {
                 }
                 if transaction.isExcluded {
                     Text("· Excluded").foregroundStyle(.orange)
+                } else if transaction.spendingAmount == 0, transaction.amount != 0 {
+                    Text("· Not counted").foregroundStyle(.orange)
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .opacity(transaction.isExcluded ? 0.5 : 1)
+        .opacity(transaction.isExcluded || (transaction.spendingAmount == 0 && transaction.amount != 0) ? 0.5 : 1)
     }
 }

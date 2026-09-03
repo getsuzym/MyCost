@@ -54,10 +54,12 @@ struct SpendingAnalytics {
         // would double-count a transaction dated exactly at 00:00 on the 1st of
         // the next month into both months. Non-spending transactions (credit-card
         // payments, deposits, payroll) are excluded — analytics use each row's
-        // account-type-normalized `spendingAmount`, not the raw bank sign.
+        // account-type-normalized `spendingAmount`, not the raw bank sign — but a
+        // user-marked recurring row the normalizer was unsure about still counts
+        // (`contributesToSpending`).
         let includedTransactions = transactions.filter {
             !$0.isExcluded &&
-            $0.countsAsSpending &&
+            $0.contributesToSpending &&
             $0.transactionDate >= interval.start &&
             $0.transactionDate < interval.end
         }

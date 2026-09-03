@@ -215,14 +215,28 @@ final class Transaction {
         set { accountTypeRawValue = newValue.rawValue }
     }
 
-    /// The value analytics should sum. Zero when the transaction doesn't count
-    /// as spending (payments, deposits). Rows that never went through
+    /// Whether this row is part of spending totals at all: either the
+    /// normalizer counted it, or the user explicitly marked it **recurring**
+    /// while the sign normalizer was uncertain (`needsDirectionReview` / an
+    /// `.unknown` direction). Marking something recurring is an explicit "this
+    /// is a regular expense" assertion that outranks a keyword guess — so a
+    /// mortgage / rent / bill payment the normalizer zeroed still counts.
+    var contributesToSpending: Bool {
+        countsAsSpending || (isRecurring && (needsDirectionReview || transactionDirection == .unknown))
+    }
+
+    /// The value analytics should sum. Zero when the transaction doesn't
+    /// contribute (payments to a card, deposits). Rows that never went through
     /// `TransactionNormalizer` (legacy data, or a direct `amount` edit) have
     /// `transactionDirection == .unknown` and fall back to the raw `amount`.
+    /// A recurring row rescued by `contributesToSpending` counts at its
+    /// bank magnitude.
     var spendingAmount: Decimal {
-        guard countsAsSpending else { return 0 }
-        if transactionDirection == .unknown { return amount }
-        return normalizedAmount
+        guard contributesToSpending else { return 0 }
+        if countsAsSpending {
+            return transactionDirection == .unknown ? amount : normalizedAmount
+        }
+        return abs(amount)
     }
 
     /// Applies a `TransactionNormalizer` result to the stored fields.
