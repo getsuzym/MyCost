@@ -55,6 +55,13 @@ struct TransactionGrouper {
             case .candidate(let candidate):
                 if let firstHeaderIndex, index < firstHeaderIndex { continue }
                 result.append(candidate)
+                // A transaction that carried its own explicit date sets the
+                // section date for the dateless rows beneath it — e.g. TD glues
+                // "Sunday August 2, 2026" onto the day's first transaction; the
+                // rest of that day's rows must inherit it, not fall back to now.
+                if let ownDate = candidate.detectedDate {
+                    carriedSectionDate = ownDate
+                }
             case .ignored:
                 break
             }
@@ -169,8 +176,9 @@ struct TransactionGrouper {
         // MARK: Classify the region
         let hasAmount = amount != nil || flags.contains(.multipleAmounts)
 
-        // A row that is only a date is a section header, not a transaction.
-        if !hasAmount, merchant.isEmpty, let headerDate = dateMatch.date {
+        // A row that is essentially just a (possibly weekday-prefixed) date is a
+        // section header, not a transaction.
+        if !hasAmount, let headerDate = heuristics.dateOnlyHeader(in: regionText) {
             return .sectionHeader(headerDate)
         }
 

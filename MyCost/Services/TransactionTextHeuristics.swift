@@ -203,6 +203,16 @@ struct TransactionTextHeuristics {
     func cleanMerchantDescription(from text: String, removing fragments: [String]) -> String {
         var cleaned = text
 
+        // Drop a leading weekday that only sits there because a section-header
+        // date got glued onto the first transaction of the day, e.g.
+        // "Sunday August 2, 2026 DOLLARAMA" → "DOLLARAMA". Only when a
+        // month-name + day follows, so real merchants ("Sunday Riley") are safe.
+        cleaned = cleaned.replacingOccurrences(
+            of: #"(?i)^\s*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues|tue|weds|wed|thurs|thur|thu|fri|sat|sun)\b\s*(?=(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d)"#,
+            with: " ",
+            options: .regularExpression
+        )
+
         for fragment in fragments where !fragment.isEmpty {
             cleaned = cleaned.replacingOccurrences(of: fragment, with: " ")
         }
@@ -237,16 +247,23 @@ struct TransactionTextHeuristics {
         return false
     }
 
-    /// A line that is essentially just a date (a statement section header),
-    /// returning the parsed date. Used to split regions and to carry the date
-    /// forward to every transaction in the section.
+    /// Weekday names (long and common short forms) that prefix a statement's
+    /// date section headers on some banks, e.g. TD's "Sunday August 2, 2026".
+    static let weekdayWordPattern =
+        #"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues|tue|weds|wed|thurs|thur|thu|fri|sat|sun)\b"#
+
+    /// A line that is essentially just a date — a statement section header —
+    /// returning the parsed date. Tolerates a leading weekday name (TD-style).
+    /// Used to split regions and to carry the date forward to every transaction
+    /// in the section.
     func dateOnlyHeader(in text: String) -> Date? {
         guard !containsAmount(in: text) else { return nil }
         let detection = detectDate(in: text)
         guard let date = detection.date, let original = detection.originalText else { return nil }
         let remainder = text
-            .replacingOccurrences(of: original, with: " ")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-•·°:>‹›< ,"))
+            .replacingOccurrences(of: original, with: " ", options: [.caseInsensitive])
+            .replacingOccurrences(of: Self.weekdayWordPattern, with: " ", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-•·°:>‹›< ,."))
         return remainder.count <= 3 ? date : nil
     }
 

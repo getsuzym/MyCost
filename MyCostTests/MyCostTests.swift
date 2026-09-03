@@ -1684,6 +1684,57 @@ final class MyCostTests: XCTestCase {
         XCTAssertFalse(candidates.contains { $0.validationFlags.contains(.missingDate) })
     }
 
+    func testDateOnlyHeaderToleratesLeadingWeekday() {
+        let h = TransactionTextHeuristics(referenceDate: date(2026, 9, 15))
+        XCTAssertEqual(h.dateOnlyHeader(in: "Sunday August 2, 2026"), date(2026, 8, 2))
+        XCTAssertEqual(h.dateOnlyHeader(in: "Friday July 31, 2026"), date(2026, 7, 31))
+        XCTAssertEqual(h.dateOnlyHeader(in: "Thu Aug 6, 2026"), date(2026, 8, 6))
+        // Still not a header when there's real merchant text.
+        XCTAssertNil(h.dateOnlyHeader(in: "Sunday Roast House August 2, 2026"))
+    }
+
+    /// TD Cash Back Visa layout: a "Weekday Month D, YYYY" section header with
+    /// several dateless transactions under it. Every row in a section — not just
+    /// the first — must inherit that date instead of defaulting to today.
+    func testTDStyleWeekdayHeaderDatesEveryTransactionInTheSection() {
+        let referenceDate = date(2026, 9, 15) // clearly not any statement date
+        let observations = [
+            obs("Thursday August 6, 2026", x: 0.06, y: 0.06, w: 0.55),
+            obs("SQ *PALLET COFFEE ROASTER", x: 0.06, y: 0.14, w: 0.60),
+            obs("26.15", x: 0.82, y: 0.14, w: 0.12),
+            obs("LS TimeOut Market Vanc", x: 0.06, y: 0.22, w: 0.50),
+            obs("8.93", x: 0.82, y: 0.22, w: 0.12),
+
+            obs("Sunday August 2, 2026", x: 0.06, y: 0.34, w: 0.52),
+            obs("DOLLARAMA #1119", x: 0.06, y: 0.42, w: 0.42),
+            obs("3.93", x: 0.82, y: 0.42, w: 0.12),
+            obs("CANADIAN TIRE #604", x: 0.06, y: 0.50, w: 0.46),
+            obs("12.31", x: 0.82, y: 0.50, w: 0.12)
+        ]
+
+        let regions = TransactionRegionDetector().detectRegions(from: observations)
+        let candidates = TransactionGrouper(referenceDate: referenceDate)
+            .candidates(from: regions, originalOCRText: observations.map(\.text).joined(separator: "\n"))
+
+        XCTAssertEqual(candidates.count, 4)
+        func forAmount(_ s: String) -> TransactionCandidate? {
+            candidates.first { $0.amount == Decimal(string: s) }
+        }
+
+        XCTAssertEqual(forAmount("26.15")?.detectedDate, date(2026, 8, 6))
+        XCTAssertEqual(forAmount("8.93")?.detectedDate, date(2026, 8, 6))
+        XCTAssertEqual(forAmount("3.93")?.detectedDate, date(2026, 8, 2))
+        // The reported bug: the SECOND transaction under a date defaulted to now.
+        XCTAssertEqual(forAmount("12.31")?.detectedDate, date(2026, 8, 2))
+
+        XCTAssertFalse(candidates.contains { $0.validationFlags.contains(.missingDate) })
+        XCTAssertFalse(candidates.contains { $0.detectedDate == referenceDate })
+        // The weekday isn't left stuck on a merchant name.
+        XCTAssertFalse(candidates.contains { $0.rawMerchantDescription.lowercased().contains("sunday") })
+        XCTAssertFalse(candidates.contains { $0.rawMerchantDescription.lowercased().contains("thursday") })
+        XCTAssertTrue(forAmount("3.93")?.rawMerchantDescription.contains("DOLLARAMA") == true)
+    }
+
     func testSpatialGrouperPreservesObservationTextFrameAndConfidence() throws {
         let observations = [
             obs("MERCHANT", x: 0.06, y: 0.10, w: 0.4, confidence: 0.81),

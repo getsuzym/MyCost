@@ -331,12 +331,30 @@ struct ReviewTransactionsView: View {
             return
         }
 
-        ocrReviewStore.removeDrafts(ids: Set(draftsToImport.map(\.id)))
+        let importedIDs = Set(draftsToImport.map(\.id))
+        let remaining = ocrReviewStore.drafts.filter { !importedIDs.contains($0.id) }
+
         ToastCenter.shared.show(
             isBatch
                 ? CRUDFeedback.batchImportResult(added: outcome.importedCount, duplicatesSkipped: scan.blockedCount, persisted: true)
                 : CRUDFeedback.result(.add, "transaction", count: outcome.importedCount, persisted: true)
         )
+
+        if remaining.isEmpty {
+            // Everything was imported. Dismiss first and tear the session down
+            // AFTER the sheet is gone — mutating `drafts` (and the batch/account
+            // sections that key off it) while the List is on screen and the
+            // sheet is animating trips `List`'s animated diff.
+            dismiss()
+            let store = ocrReviewStore
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                store.clear()
+            }
+            return
+        }
+
+        ocrReviewStore.removeDrafts(ids: importedIDs)
         var parts = ["Saved \(outcome.importedCount) transaction\(outcome.importedCount == 1 ? "" : "s") — \(outcome.persistedTransactionCount) now in your history."]
         if scan.blockedCount > 0 {
             parts.append("\(scan.blockedCount) high-confidence duplicate\(scan.blockedCount == 1 ? "" : "s") skipped.")
@@ -348,13 +366,6 @@ struct ReviewTransactionsView: View {
             parts.append("\(outcome.reviewFlaggedCount) flagged for direction review.")
         }
         saveMessage = parts.joined(separator: " ")
-
-        // Nothing left to review — end the session (releases the banner and the
-        // retained thumbnails) and close the Review sheet.
-        if ocrReviewStore.drafts.isEmpty {
-            ocrReviewStore.clear()
-            dismiss()
-        }
     }
 
     // MARK: - Deterministic category suggestion (offline: rule → known merchant)

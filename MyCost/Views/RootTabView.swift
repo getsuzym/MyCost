@@ -66,7 +66,10 @@ struct RootTabView: View {
 
     @ViewBuilder
     private var reviewBanner: some View {
-        if ocrReviewStore.hasActiveSession, nav.route == nil {
+        // Gate ONLY on the session, never on `nav.route`. Presenting/closing the
+        // Review sheet must not add/remove this inset — that reflows the tab
+        // content behind an animating sheet and trips `List`'s diff.
+        if ocrReviewStore.hasActiveSession {
             Button {
                 nav.openReview()
             } label: {
@@ -86,6 +89,8 @@ struct RootTabView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("app.reviewBanner")
+            .transition(.identity)
+            .transaction { $0.animation = nil }
         }
     }
 }
