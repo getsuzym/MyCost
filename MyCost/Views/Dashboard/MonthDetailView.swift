@@ -71,6 +71,7 @@ struct MonthDetailView: View {
             }
         }
         .navigationTitle(Formatters.month.string(from: month))
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

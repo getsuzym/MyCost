@@ -8,6 +8,7 @@ struct DashboardView: View {
 
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
+    @Query(sort: \Category.sortOrder) private var categories: [Category]
 
     /// Which month the dashboard is showing. Starts at the current month; the
     /// user can step back to see an imported historical statement.
@@ -29,6 +30,19 @@ struct DashboardView: View {
         monthly.monthsRepresented(in: transactions)
     }
 
+    private func color(forCategory name: String) -> Color {
+        if let hex = categories.first(where: { $0.name == name })?.colorHex,
+           let color = Color(hex: hex) {
+            return color
+        }
+        return Theme.accent
+    }
+
+    private func symbol(forCategory name: String) -> String {
+        let symbol = categories.first(where: { $0.name == name })?.symbolName ?? ""
+        return symbol.isEmpty ? "tag.fill" : symbol
+    }
+
     var body: some View {
         // Compute once per render — `summary` builds fresh CategorySpend values,
         // and the ForEach over them needs a single, stable set to diff against.
@@ -36,51 +50,87 @@ struct DashboardView: View {
         let months = monthsWithTransactions
         return List {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Button {
-                            stepMonth(-1)
-                        } label: { Image(systemName: "chevron.left") }
-                            .accessibilityLabel("Previous month")
-                            .accessibilityIdentifier("dashboard.previousMonth")
+                heroCard(summary: summary)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
 
-                        Text(Formatters.month.string(from: summary.month))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .accessibilityLabel("Showing \(Formatters.month.string(from: summary.month))")
+            Section("This Month") {
+                let recurringCount = monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
+                    .filter { $0.isRecurring && !$0.isExcluded && $0.contributesToSpending }.count
 
-                        Button {
-                            stepMonth(1)
-                        } label: { Image(systemName: "chevron.right") }
-                            .disabled(isCurrentMonth)
-                            .accessibilityLabel("Next month")
-                            .accessibilityIdentifier("dashboard.nextMonth")
-                    }
-                    .buttonStyle(.borderless)
-
-                    Text(Formatters.currencyString(for: summary.total))
-                        .font(.largeTitle.bold())
-                        .contentTransition(.numericText())
-                        .accessibilityIdentifier("dashboard.monthlyTotal")
-
-                    if !isCurrentMonth {
-                        Button("Back to this month") { monthAnchor = Date() }
-                            .font(.caption)
-                            .buttonStyle(.borderless)
-                    }
-
-                    NavigationLink {
-                        MonthDetailView(month: monthAnchor)
-                    } label: {
-                        Label("Open \(Formatters.month.string(from: summary.month))", systemImage: "list.bullet.rectangle")
-                            .font(.callout)
-                    }
-                    .accessibilityIdentifier("dashboard.openMonth")
+                NavigationLink {
+                    MonthTransactionsListView(month: monthAnchor, scope: .recurring)
+                } label: {
+                    MetricTile(
+                        title: "Recurring",
+                        value: Formatters.currencyString(for: summary.recurringTotal),
+                        systemImage: "repeat",
+                        tint: Theme.accent,
+                        caption: "\(recurringCount) transaction\(recurringCount == 1 ? "" : "s")"
+                    )
                 }
-                .padding(.vertical, 8)
-            } header: {
-                Text("Monthly Spending")
+                .accessibilityIdentifier("dashboard.recurringThisMonth")
+
+                NavigationLink {
+                    MonthTransactionsListView(month: monthAnchor, scope: .nonRecurring)
+                } label: {
+                    MetricTile(
+                        title: "Non-Recurring",
+                        value: Formatters.currencyString(for: summary.nonRecurringTotal),
+                        systemImage: "cart.fill",
+                        tint: Color(light: 0x0E7C86, dark: 0x4FD1DB)
+                    )
+                }
+                .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
+            }
+
+            Section("Categories") {
+                if summary.categoryTotals.isEmpty {
+                    Text("No spending this month")
+                        .foregroundStyle(.secondary)
+                }
+
+                if !summary.categoryTotals.isEmpty {
+                    SpendingDistributionChart(
+                        categories: summary.categoryTotals,
+                        colorForName: color(forCategory:)
+                    )
+                    .frame(height: 190)
+                    .padding(.vertical, 6)
+                    .accessibilityIdentifier("dashboard.categoryChart")
+                }
+
+                ForEach(summary.categoryTotals) { categoryTotal in
+                    NavigationLink {
+                        CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
+                    } label: {
+                        CategoryBreakdownRow(
+                            category: categoryTotal,
+                            tint: color(forCategory: categoryTotal.categoryName),
+                            symbol: symbol(forCategory: categoryTotal.categoryName)
+                        )
+                    }
+                    .accessibilityIdentifier("dashboard.category")
+                }
+            }
+
+            Section("Range") {
+                MetricTile(
+                    title: "Highest",
+                    value: summary.highestCategory.map { Formatters.currencyString(for: $0.amount) } ?? "None",
+                    systemImage: "arrow.up.forward",
+                    tint: Theme.warning,
+                    caption: summary.highestCategory?.categoryName
+                )
+                MetricTile(
+                    title: "Lowest",
+                    value: summary.lowestCategory.map { Formatters.currencyString(for: $0.amount) } ?? "None",
+                    systemImage: "arrow.down.forward",
+                    tint: Theme.positive,
+                    caption: summary.lowestCategory?.categoryName
+                )
             }
 
             Section("Months") {
@@ -99,75 +149,14 @@ struct DashboardView: View {
                             Spacer()
                             Text("\(monthTx.count) · \(Formatters.currencyString(for: monthTotal))")
                                 .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
                     }
                 }
             }
-
-            Section("Recurring") {
-                let recurringCount = monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
-                    .filter { $0.isRecurring && !$0.isExcluded && $0.contributesToSpending }.count
-
-                NavigationLink {
-                    MonthTransactionsListView(month: monthAnchor, scope: .recurring)
-                } label: {
-                    MetricRow(
-                        title: "Recurring This Month",
-                        value: "\(recurringCount) · \(Formatters.currencyString(for: summary.recurringTotal))",
-                        systemImage: "repeat"
-                    )
-                }
-                .accessibilityIdentifier("dashboard.recurringThisMonth")
-
-                NavigationLink {
-                    MonthTransactionsListView(month: monthAnchor, scope: .nonRecurring)
-                } label: {
-                    MetricRow(
-                        title: "Non-Recurring This Month",
-                        value: Formatters.currencyString(for: summary.nonRecurringTotal),
-                        systemImage: "cart"
-                    )
-                }
-                .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
-            }
-
-            Section("Categories") {
-                if summary.categoryTotals.isEmpty {
-                    Text("No spending this month")
-                        .foregroundStyle(.secondary)
-                }
-
-                if !summary.categoryTotals.isEmpty {
-                    SpendingDistributionChart(categories: summary.categoryTotals)
-                        .frame(height: 170)
-                        .padding(.vertical, 4)
-                        .accessibilityIdentifier("dashboard.categoryChart")
-                }
-
-                ForEach(summary.categoryTotals) { categoryTotal in
-                    NavigationLink {
-                        CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
-                    } label: {
-                        CategoryBreakdownRow(category: categoryTotal)
-                    }
-                    .accessibilityIdentifier("dashboard.category")
-                }
-            }
-
-            Section("Range") {
-                MetricRow(
-                    title: "Highest",
-                    value: summary.highestCategory.map { "\($0.categoryName) • \(Formatters.currencyString(for: $0.amount))" } ?? "None",
-                    systemImage: "arrow.up.circle"
-                )
-                MetricRow(
-                    title: "Lowest",
-                    value: summary.lowestCategory.map { "\($0.categoryName) • \(Formatters.currencyString(for: $0.amount))" } ?? "None",
-                    systemImage: "arrow.down.circle"
-                )
-            }
         }
         .navigationTitle("Dashboard")
+        .themedListBackground()
         .refreshable {
             // Totals are @Query-derived and always live; this just gives the
             // pull-down gesture its spinner and a fresh recompute.
@@ -185,26 +174,74 @@ struct DashboardView: View {
         }
     }
 
+    @ViewBuilder
+    private func heroCard(summary: MonthlySpendingSummary) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Button { stepMonth(-1) } label: {
+                    Image(systemName: "chevron.left").font(.body.weight(.semibold))
+                }
+                .accessibilityLabel("Previous month")
+                .accessibilityIdentifier("dashboard.previousMonth")
+
+                Spacer()
+                Text(Formatters.month.string(from: summary.month))
+                    .font(.subheadline.weight(.medium))
+                    .accessibilityLabel("Showing \(Formatters.month.string(from: summary.month))")
+                Spacer()
+
+                Button { stepMonth(1) } label: {
+                    Image(systemName: "chevron.right").font(.body.weight(.semibold))
+                }
+                .disabled(isCurrentMonth)
+                .accessibilityLabel("Next month")
+                .accessibilityIdentifier("dashboard.nextMonth")
+            }
+            .buttonStyle(.borderless)
+            .tint(.secondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Total spent")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(Formatters.currencyString(for: summary.total))
+                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("dashboard.monthlyTotal")
+            }
+
+            HStack(spacing: 10) {
+                NavigationLink {
+                    MonthDetailView(month: monthAnchor)
+                } label: {
+                    Label("Open \(Formatters.month.string(from: summary.month))", systemImage: "list.bullet.rectangle")
+                        .font(.footnote.weight(.medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Theme.accent.opacity(0.14), in: Capsule())
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dashboard.openMonth")
+
+                if !isCurrentMonth {
+                    Button("This month") { monthAnchor = Date() }
+                        .font(.footnote.weight(.medium))
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
+        .cardSurface(20)
+    }
+
     private func stepMonth(_ delta: Int) {
         guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
         // Never step past the current month.
         monthAnchor = moved > Date() ? Date() : moved
-    }
-}
-
-private struct MetricRow: View {
-    let title: String
-    let value: String
-    let systemImage: String
-
-    var body: some View {
-        HStack {
-            Label(title, systemImage: systemImage)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-        }
     }
 }
 
@@ -213,13 +250,17 @@ private struct MetricRow: View {
 /// supplementary.
 private struct CategoryBreakdownRow: View {
     let category: CategorySpend
+    var tint: Color = Theme.accent
+    var symbol: String = "tag.fill"
 
     var body: some View {
-        HStack {
-            Label(category.categoryName, systemImage: "tag")
-            Spacer()
+        HStack(spacing: 12) {
+            IconBadge(systemName: symbol, tint: tint, size: 30)
+            Text(category.categoryName)
+            Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 1) {
                 Text(Formatters.currencyString(for: category.amount))
+                    .monospacedDigit()
                 Text(Formatters.percentString(category.percentageOfTotal))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -235,6 +276,7 @@ private struct CategoryBreakdownRow: View {
 /// every exact dollar amount + percentage stay in the text rows below.
 private struct SpendingDistributionChart: View {
     let categories: [CategorySpend]
+    var colorForName: (String) -> Color
 
     private var slices: [CategorySpend] {
         categories.filter { $0.amount > 0 }
@@ -249,12 +291,16 @@ private struct SpendingDistributionChart: View {
             Chart(slices) { category in
                 SectorMark(
                     angle: .value("Amount", NSDecimalNumber(decimal: category.amount).doubleValue),
-                    innerRadius: .ratio(0.55),
+                    innerRadius: .ratio(0.6),
                     angularInset: 1.5
                 )
-                .cornerRadius(3)
+                .cornerRadius(4)
                 .foregroundStyle(by: .value("Category", category.categoryName))
             }
+            .chartForegroundStyleScale(
+                domain: slices.map(\.categoryName),
+                range: slices.map { colorForName($0.categoryName) }
+            )
             .chartLegend(position: .trailing, alignment: .center, spacing: 8)
         }
     }

@@ -57,6 +57,7 @@ struct MerchantRulesView: View {
             }
         }
         .navigationTitle("Merchant Rules")
+        .themedListBackground()
         .searchable(text: $searchText, prompt: "Search rules")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -133,7 +134,7 @@ private struct MerchantRuleRow: View {
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    .background(Theme.accent.opacity(0.15), in: Capsule())
                 Text("\u{201C}\(rule.matchText)\u{201D}")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

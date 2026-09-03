@@ -64,6 +64,7 @@ struct CategoryManagementView: View {
             }
         }
         .navigationTitle("Categories")
+        .themedListBackground()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -157,9 +158,11 @@ private struct CategoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: category.symbolName.isEmpty ? "tag" : category.symbolName)
-                .foregroundStyle(Color(hex: category.colorHex) ?? .accentColor)
-                .frame(width: 24)
+            IconBadge(
+                systemName: category.symbolName.isEmpty ? "tag.fill" : category.symbolName,
+                tint: Color(hex: category.colorHex) ?? Theme.accent,
+                size: 30
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -277,7 +280,7 @@ private struct CategoryEditorView: View {
                     Text("Preview")
                     Spacer()
                     Image(systemName: symbolName.isEmpty ? "tag" : symbolName)
-                        .foregroundStyle(Color(hex: colorHex) ?? .accentColor)
+                        .foregroundStyle(Color(hex: colorHex) ?? Theme.accent)
                 }
             }
 
@@ -364,15 +367,4 @@ private struct CategoryEditorView: View {
     }
 }
 
-extension Color {
-    /// `#RRGGBB` → Color, or nil if unparseable.
-    init?(hex: String) {
-        let cleaned = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# ")).uppercased()
-        guard cleaned.count == 6, let value = UInt64(cleaned, radix: 16) else { return nil }
-        self.init(
-            red: Double((value & 0xFF0000) >> 16) / 255,
-            green: Double((value & 0x00FF00) >> 8) / 255,
-            blue: Double(value & 0x0000FF) / 255
-        )
-    }
-}
+// `Color(hex:)` lives in Theme.swift.

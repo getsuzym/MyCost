@@ -116,6 +116,7 @@ struct CategoryDetailView: View {
             }
         }
         .navigationTitle(categoryName)
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

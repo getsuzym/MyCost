@@ -47,6 +47,7 @@ struct AccountsView: View {
             }
         }
         .navigationTitle("Accounts")
+        .themedListBackground()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

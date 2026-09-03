@@ -115,6 +115,7 @@ struct MonthTransactionsListView: View {
             }
         }
         .navigationTitle(navTitle)
+        .themedListBackground()
         .navigationBarTitleDisplayMode(.inline)
     }
 

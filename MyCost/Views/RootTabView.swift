@@ -38,6 +38,7 @@ struct RootTabView: View {
             .tabItem { Label("More", systemImage: "ellipsis.circle") }
             .accessibilityIdentifier("tab.more")
         }
+        .tint(Theme.accent)
         .environmentObject(ocrReviewStore)
         .environmentObject(nav)
         .safeAreaInset(edge: .top, spacing: 0) { reviewBanner }

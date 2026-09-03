@@ -754,7 +754,7 @@ private struct InlineRuleRow: View {
                 Text(rule.matchType.label)
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    .background(Theme.accent.opacity(0.15), in: Capsule())
                 Text("\u{201C}\(rule.matchText)\u{201D}").lineLimit(1)
                 if let category = rule.category {
                     Text("\u{00B7} \(category.name)")

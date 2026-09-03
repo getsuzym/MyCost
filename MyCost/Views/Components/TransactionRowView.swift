@@ -3,35 +3,58 @@ import SwiftUI
 struct TransactionRowView: View {
     let transaction: Transaction
 
+    private var tint: Color {
+        if let hex = transaction.category?.colorHex, let color = Color(hex: hex) {
+            return color
+        }
+        return Theme.accent
+    }
+
+    private var isRefund: Bool { transaction.amount < 0 }
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: transaction.category?.symbolName ?? "tag")
-                .frame(width: 32, height: 32)
-                .background(.thinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            IconBadge(
+                systemName: transaction.category?.symbolName.isEmpty == false
+                    ? transaction.category!.symbolName
+                    : "tag.fill",
+                tint: tint
+            )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(transaction.merchantName)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
                     .accessibilityIdentifier("transactionRow.merchant")
 
-                Text("\(transaction.category?.name ?? "Uncategorized") • \(Formatters.shortDate.string(from: transaction.transactionDate))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(transaction.category?.name ?? "Uncategorized")
+                    Text("·")
+                    Text(Formatters.shortDate.string(from: transaction.transactionDate))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 3) {
                 Text(Formatters.currencyString(for: transaction.amount))
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(isRefund ? Theme.positive : Color.primary)
 
                 if transaction.isRecurring {
                     Text("Recurring")
-                        .font(.caption)
-                        .foregroundStyle(.blue)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Theme.accent.opacity(0.15), in: Capsule())
+                        .foregroundStyle(Theme.accent)
                 }
             }
         }
+        .padding(.vertical, 2)
     }
 }

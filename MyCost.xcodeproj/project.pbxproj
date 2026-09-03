@@ -25,6 +25,7 @@
 		000000000000000000000110 /* TransactionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* TransactionDetailView.swift */; };
 		000000000000000000000111 /* TransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011 /* TransactionEditorView.swift */; };
 		000000000000000000000112 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000012 /* Formatters.swift */; };
+		00000000000000000000090D /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090E /* Theme.swift */; };
 		000000000000000000000113 /* TransactionRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013 /* TransactionRowView.swift */; };
 		000000000000000000000114 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000015 /* VisionOCRService.swift */; };
 		000000000000000000000115 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000016 /* ImagePicker.swift */; };
@@ -88,6 +89,7 @@
 		000000000000000000000010 /* TransactionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionDetailView.swift; sourceTree = "<group>"; };
 		000000000000000000000011 /* TransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionEditorView.swift; sourceTree = "<group>"; };
 		000000000000000000000012 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
+		00000000000000000000090E /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		000000000000000000000013 /* TransactionRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionRowView.swift; sourceTree = "<group>"; };
 		000000000000000000000904 /* RecurrenceRuleEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceRuleEditor.swift; sourceTree = "<group>"; };
 		000000000000000000000014 /* MyCost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyCost.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -327,6 +329,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000012 /* Formatters.swift */,
+				00000000000000000000090E /* Theme.swift */,
 				000000000000000000000013 /* TransactionRowView.swift */,
 				000000000000000000000904 /* RecurrenceRuleEditor.swift */,
 			);
@@ -550,6 +553,7 @@
 				000000000000000000000110 /* TransactionDetailView.swift in Sources */,
 				000000000000000000000111 /* TransactionEditorView.swift in Sources */,
 				000000000000000000000112 /* Formatters.swift in Sources */,
+				00000000000000000000090D /* Theme.swift in Sources */,
 				000000000000000000000113 /* TransactionRowView.swift in Sources */,
 				000000000000000000000903 /* RecurrenceRuleEditor.swift in Sources */,
 				000000000000000000000115 /* ImagePicker.swift in Sources */,

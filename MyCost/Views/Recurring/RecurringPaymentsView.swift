@@ -107,28 +107,32 @@ struct RecurringPaymentsView: View {
                 }
                 .buttonStyle(.borderless)
 
-                RecurringMetricRow(
+                MetricTile(
                     title: "Expected This Month",
                     value: Formatters.currencyString(for: expectation.expectedTotal),
-                    systemImage: "calendar.badge.clock"
+                    systemImage: "calendar.badge.clock",
+                    tint: Theme.accent
                 )
                 .accessibilityIdentifier("recurringMonth.expected")
-                RecurringMetricRow(
+                MetricTile(
                     title: "Actual This Month",
                     value: Formatters.currencyString(for: recurringMonthTotal),
-                    systemImage: "repeat"
+                    systemImage: "checkmark.circle.fill",
+                    tint: Theme.positive
                 )
                 .accessibilityIdentifier("recurringMonth.total")
-                RecurringMetricRow(
+                MetricTile(
                     title: "Remaining This Month",
                     value: Formatters.currencyString(for: expectation.remainingTotal),
-                    systemImage: "hourglass"
+                    systemImage: "hourglass",
+                    tint: Theme.warning
                 )
                 .accessibilityIdentifier("recurringMonth.remaining")
-                RecurringMetricRow(
+                MetricTile(
                     title: "Occurrences",
                     value: "\(expectation.completedCount) of \(expectation.expectedCount)",
-                    systemImage: "number"
+                    systemImage: "number",
+                    tint: Color(light: 0x0E7C86, dark: 0x4FD1DB)
                 )
                 .accessibilityIdentifier("recurringMonth.occurrences")
             } header: {
@@ -210,6 +214,7 @@ struct RecurringPaymentsView: View {
             }
         }
         .navigationTitle("Recurring")
+        .themedListBackground()
         .refreshable {
             // Occurrence / paid status is recomputed on every render from live
             // @Query data; this gives the pull-down its spinner.
@@ -406,21 +411,6 @@ private struct UnifiedLooseTransactionRow: View {
                 .foregroundStyle(transaction.amount < 0 ? .green : .primary)
         }
         .opacity(transaction.isExcluded ? 0.5 : 1)
-    }
-}
-
-private struct RecurringMetricRow: View {
-    let title: String
-    let value: String
-    let systemImage: String
-
-    var body: some View {
-        HStack {
-            Label(title, systemImage: systemImage)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 

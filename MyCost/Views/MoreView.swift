@@ -37,5 +37,6 @@ struct MoreView: View {
             }
         }
         .navigationTitle("More")
+        .themedListBackground()
     }
 }

@@ -135,6 +135,7 @@ struct TransactionHistoryView: View {
             }
         }
         .navigationTitle("Transactions")
+        .themedListBackground()
         .searchable(text: $searchText, prompt: "Search transactions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
