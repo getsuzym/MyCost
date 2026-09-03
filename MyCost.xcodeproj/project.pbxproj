@@ -61,7 +61,6 @@
 		000000000000000000000136 /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000037 /* AccountsView.swift */; };
 		000000000000000000000137 /* CategoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000038 /* CategoryDetailView.swift */; };
 		000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000039 /* MerchantRuleEditorView.swift */; };
-		000000000000000000000909 /* AttachExistingRuleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090A /* AttachExistingRuleView.swift */; };
 		000000000000000000000139 /* MonthTransactionsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003A /* MonthTransactionsListView.swift */; };
 		00000000000000000000013A /* AppNavigationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003B /* AppNavigationModel.swift */; };
 		00000000000000000000013B /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003C /* MoreView.swift */; };
@@ -125,7 +124,6 @@
 		000000000000000000000037 /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Accounts/AccountsView.swift; sourceTree = "<group>"; };
 		000000000000000000000038 /* CategoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetailView.swift; sourceTree = "<group>"; };
 		000000000000000000000039 /* MerchantRuleEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleEditorView.swift; sourceTree = "<group>"; };
-		00000000000000000000090A /* AttachExistingRuleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachExistingRuleView.swift; sourceTree = "<group>"; };
 		00000000000000000000003A /* MonthTransactionsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthTransactionsListView.swift; sourceTree = "<group>"; };
 		00000000000000000000003B /* AppNavigationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNavigationModel.swift; sourceTree = "<group>"; };
 		00000000000000000000003C /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
@@ -346,7 +344,6 @@
 			children = (
 				000000000000000000000019 /* MerchantRulesView.swift */,
 				000000000000000000000039 /* MerchantRuleEditorView.swift */,
-				00000000000000000000090A /* AttachExistingRuleView.swift */,
 			);
 			path = Rules;
 			sourceTree = "<group>";
@@ -514,7 +511,6 @@
 				000000000000000000000136 /* AccountsView.swift in Sources */,
 				000000000000000000000137 /* CategoryDetailView.swift in Sources */,
 				000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */,
-				000000000000000000000909 /* AttachExistingRuleView.swift in Sources */,
 				000000000000000000000139 /* MonthTransactionsListView.swift in Sources */,
 				00000000000000000000013A /* AppNavigationModel.swift in Sources */,
 				00000000000000000000013B /* MoreView.swift in Sources */,

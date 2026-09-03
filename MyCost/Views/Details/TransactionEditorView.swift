@@ -51,7 +51,6 @@ struct TransactionEditorView: View {
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
     @State private var pendingMerchantLearning: MerchantLearningPrompt?
-    @State private var isAttachingRule = false
 
     private let duplicateMatchingService = DuplicateMatchingService()
     private let merchantRuleService = MerchantRuleService()
@@ -178,17 +177,33 @@ struct TransactionEditorView: View {
             }
 
             Section {
-                Button {
-                    isAttachingRule = true
-                } label: {
-                    Label("Attach an Existing Rule", systemImage: "link")
+                if merchantRules.isEmpty {
+                    Text("No saved rules yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    if inlineMatchingRules.isEmpty {
+                        Text("No rule's text matches this transaction \u{2014} pick one under \u{201C}Other rules\u{201D} to attach it anyway.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(inlineMatchingRules) { rule in
+                        Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
+                            .accessibilityIdentifier("transactionEditor.attachRule")
+                    }
+
+                    if !inlineOtherRules.isEmpty {
+                        DisclosureGroup("Other rules (\(inlineOtherRules.count))") {
+                            ForEach(inlineOtherRules) { rule in
+                                Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
+                                    .accessibilityIdentifier("transactionEditor.attachRuleOther")
+                            }
+                        }
+                    }
                 }
-                .disabled(merchantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || merchantRules.isEmpty)
-                .accessibilityIdentifier("transactionEditor.attachRule")
             } header: {
-                Text("Merchant Rule")
+                Text("Attach a Merchant Rule")
             } footer: {
-                Text("Apply one of your saved rules (including recurring ones). Picking a rule applies it to this transaction right away \u{2014} matching rules in one tap, others after a confirmation (useful after a rename).")
+                Text("Tapping a rule applies its name, category and recurring setting to this transaction right away. Rules whose text matches this transaction are listed first.")
             }
 
             Section("Note") {
@@ -268,16 +283,6 @@ struct TransactionEditorView: View {
             }
         }
         .onAppear(perform: loadInitialValues)
-        .sheet(isPresented: $isAttachingRule) {
-            NavigationStack {
-                AttachExistingRuleView(
-                    merchantName: merchantName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    originalDescription: editingOriginalDescription,
-                    rules: merchantRules,
-                    onAttach: attachRule
-                )
-            }
-        }
     }
 
     /// The bank's raw description of the transaction being edited (empty when
@@ -286,6 +291,24 @@ struct TransactionEditorView: View {
     private var editingOriginalDescription: String {
         if case .edit(let transaction) = mode { return transaction.originalDescription }
         return ""
+    }
+
+    /// Saved rules whose match text is found in the (possibly renamed) merchant
+    /// name or the bank's original description — offered first for attaching.
+    private var inlineMatchingRules: [MerchantRule] {
+        let name = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return merchantRuleService.rulesMatching(
+            merchantName: name,
+            originalDescription: editingOriginalDescription.isEmpty ? name : editingOriginalDescription,
+            in: merchantRules
+        ).alphabetizedByName()
+    }
+
+    /// Every other rule (including disabled ones and ones whose text no longer
+    /// matches after a rename) — collapsed under a disclosure, still attachable.
+    private var inlineOtherRules: [MerchantRule] {
+        let matchIDs = Set(inlineMatchingRules.map(\.id))
+        return merchantRules.filter { !matchIDs.contains($0.id) }.alphabetizedByName()
     }
 
     /// Apply a hand-picked rule to the transaction. For an existing transaction
@@ -704,4 +727,41 @@ private struct MerchantLearningPrompt: Identifiable {
     let containsText: String
     let displayName: String
     let categoryID: UUID?
+}
+
+/// A compact rule row for the inline "Attach a Merchant Rule" list in the
+/// transaction editor.
+private struct InlineRuleRow: View {
+    let rule: MerchantRule
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(rule.normalizedMerchantName)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                if rule.isRecurring {
+                    Text("Recurring")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.15), in: Capsule())
+                }
+                if !rule.isActive {
+                    Text("Disabled").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 6) {
+                Text(rule.matchType.label)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                Text("\u{201C}\(rule.matchText)\u{201D}").lineLimit(1)
+                if let category = rule.category {
+                    Text("\u{00B7} \(category.name)")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
 }
