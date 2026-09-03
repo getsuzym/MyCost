@@ -3345,6 +3345,30 @@ final class MyCostTests: XCTestCase {
         // The only image storage on the session is `sourceThumbnails` (downscaled).
     }
 
+    func testRemovingEveryReviewDraftLeavesTheStoreEmptyAndInactive() {
+        let store = reviewStore([
+            ocrCandidate("A", amount: 1), ocrCandidate("B", amount: 2), ocrCandidate("C", amount: 3)
+        ])
+        XCTAssertTrue(store.hasActiveSession)
+
+        for id in store.drafts.map(\.id) {
+            store.removeDraft(id: id)
+        }
+        XCTAssertTrue(store.drafts.isEmpty)
+        XCTAssertFalse(store.hasActiveSession)
+        XCTAssertEqual(store.selectedCount, 0)
+
+        store.removeDraft(id: UUID()) // stale id — no-op, no crash
+        XCTAssertTrue(store.drafts.isEmpty)
+    }
+
+    func testDraftPlaceholderIsANeutralNonImportableDraft() {
+        let placeholder = OCRTransactionDraft.placeholder
+        XCTAssertTrue(placeholder.trimmedMerchantName.isEmpty)
+        XCTAssertNil(placeholder.parsedAmount)
+        XCTAssertFalse(placeholder.canImport)
+    }
+
         private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
         Calendar(identifier: .gregorian).date(from: DateComponents(year: year, month: month, day: day))!
     }

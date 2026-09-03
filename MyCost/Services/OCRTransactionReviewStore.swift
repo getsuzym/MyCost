@@ -160,6 +160,17 @@ struct OCRTransactionDraft: Identifiable, Equatable {
         }
     }
 
+    /// A neutral draft the Review list can bind to for the brief window a row
+    /// is being torn down after its draft was removed — avoids indexing a stale
+    /// position into `drafts` (`ContiguousArrayBuffer` crash).
+    static let placeholder = OCRTransactionDraft(
+        candidate: TransactionCandidate(
+            detectedDate: nil, rawMerchantDescription: "", amount: nil, status: nil,
+            originalOCRText: "", sourceText: "",
+            confidence: .empty, validationFlags: []
+        )
+    )
+
     func duplicateSnapshot() -> DuplicateTransactionSnapshot? {
         guard let amount = parsedAmount, !trimmedMerchantName.isEmpty else { return nil }
         return DuplicateTransactionSnapshot(

@@ -242,19 +242,20 @@ struct ReviewTransactionsView: View {
                 Text("No transactions in this review. Start an import from the Dashboard.")
                     .foregroundStyle(.secondary)
             }
-            ForEach($ocrReviewStore.drafts) { $draft in
+            // Iterate by identity (not `$binding`) and hand each row a binding
+            // that looks its draft up by `id`. A positional `ForEach($array)`
+            // crashes (`ContiguousArrayBuffer:692`) when the array shrinks while
+            // a row is being torn down.
+            ForEach(ocrReviewStore.drafts) { draft in
                 OCRTransactionDraftRow(
-                    draft: $draft,
+                    draft: draftBinding(for: draft.id),
                     categories: categories,
                     suggestionState: suggestionStates[draft.id],
                     hasSourceScreenshot: draft.sourceScreenshotID.map { ocrReviewStore.sourceThumbnails[$0] != nil } ?? false,
                     onViewSource: {
                         if let id = draft.sourceScreenshotID { sourcePreviewID = id }
                     },
-                    onRemove: {
-                        ocrReviewStore.removeDraft(id: draft.id)
-                        suggestionStates[draft.id] = nil
-                    },
+                    onRemove: { removeDraft(id: draft.id) },
                     onSuggestCategory: { suggestCategory(for: draft.id) },
                     onDismissSuggestion: { suggestionStates[draft.id] = nil },
                     onCategoryUserSet: { ocrReviewStore.markCategoryUserSet(id: draft.id) },
@@ -281,6 +282,33 @@ struct ReviewTransactionsView: View {
     private func seedAccountTypes() {
         for name in distinctAccountNames where accountTypeByName[name] == nil {
             accountTypeByName[name] = accountService.resolveType(for: name, in: accounts)
+        }
+    }
+
+    /// A binding that resolves a draft by `id` (never a stale array index).
+    private func draftBinding(for id: UUID) -> Binding<OCRTransactionDraft> {
+        Binding(
+            get: { ocrReviewStore.drafts.first { $0.id == id } ?? .placeholder },
+            set: { newValue in
+                if let index = ocrReviewStore.drafts.firstIndex(where: { $0.id == id }) {
+                    ocrReviewStore.drafts[index] = newValue
+                }
+            }
+        )
+    }
+
+    private func removeDraft(id: UUID) {
+        ocrReviewStore.removeDraft(id: id)
+        suggestionStates[id] = nil
+        // Removed the last one — close the (now empty) session, deferring the
+        // teardown until the sheet is gone.
+        if ocrReviewStore.drafts.isEmpty {
+            dismiss()
+            let store = ocrReviewStore
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                store.clear()
+            }
         }
     }
 
