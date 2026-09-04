@@ -2750,6 +2750,77 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(debit.countsAsSpending)
     }
 
+    func testNormalizerFlagsDepositsAndPayrollAsLikelyIncome() {
+        XCTAssertTrue(normalizer.normalize(originalAmount: 2200, accountType: .debit, description: "PAYROLL DIRECT DEPOSIT").isLikelyIncome)
+        XCTAssertTrue(normalizer.normalize(originalAmount: 900, accountType: .debit, description: "E-TRANSFER FROM MOM").isLikelyIncome)
+        XCTAssertTrue(normalizer.normalize(originalAmount: 500, accountType: .other, description: "GOV CANADA BENEFIT").isLikelyIncome)
+        // Not income: a purchase, a refund, a spend on a card, a bare positive.
+        XCTAssertFalse(normalizer.normalize(originalAmount: 45, accountType: .debit, description: "CORNER MARKET").isLikelyIncome)
+        XCTAssertFalse(normalizer.normalize(originalAmount: -35, accountType: .creditCard, description: "AMAZON REFUND").isLikelyIncome)
+        XCTAssertFalse(normalizer.normalize(originalAmount: 60, accountType: .debit, description: "UNKNOWN 771").isLikelyIncome)
+        XCTAssertFalse(normalizer.normalize(originalAmount: 20, accountType: .creditCard, description: "CAFE").isLikelyIncome)
+    }
+
+    func testIncomeRowsAreExcludedFromSpendingAndFeedTheIncomeTotal() throws {
+        let salary = makeCategory("Salary", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+
+        let paycheck = insertTransaction("PAYROLL", amount: 3000, on: date(2026, 8, 1), category: salary)
+        paycheck.isIncome = true
+        insertTransaction("Market", amount: 120, on: date(2026, 8, 4), category: groceries)
+        try context.save()
+
+        XCTAssertEqual(paycheck.spendingAmount, 0)
+        XCTAssertEqual(paycheck.incomeAmount, 3000)
+        XCTAssertFalse(paycheck.contributesToSpending)
+
+        let summary = try summaryFor(date(2026, 8, 15))
+        XCTAssertEqual(summary.total, 120)                 // groceries only
+        XCTAssertEqual(summary.incomeTotal, 3000)
+        XCTAssertEqual(summary.netTotal, 2880)             // 3000 - 120
+        XCTAssertNil(summary.categoryTotals.first { $0.categoryName == "Salary" })
+    }
+
+    func testImportPreTagsDepositsAsIncome() throws {
+        let drafts = [
+            draft(merchant: "GROCERY RUN", amount: -60, on: date(2026, 8, 4)),
+            draft(merchant: "PAYROLL DIRECT DEPOSIT", amount: 2500, on: date(2026, 8, 1))
+        ]
+        let outcome = OCRTransactionImportService().importDrafts(
+            drafts, categories: [], accountTypesByName: ["Default": .debit],
+            existingTransactions: [], existingRules: [], modelContext: context
+        )
+        XCTAssertNil(outcome.saveError)
+
+        let history = try historyTransactions()
+        XCTAssertTrue(try XCTUnwrap(history.first { $0.merchantName == "PAYROLL DIRECT DEPOSIT" }).isIncome)
+        XCTAssertFalse(try XCTUnwrap(history.first { $0.merchantName == "GROCERY RUN" }).isIncome)
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
+        XCTAssertEqual(summary.total, 60)
+        XCTAssertEqual(summary.incomeTotal, 2500)
+    }
+
+    func testTagLikelyIncomeMigrationRunsOnceOverExistingRows() throws {
+        UserDefaults.standard.removeObject(forKey: "mycost.migration.incomeSplit.v1")
+        let paycheck = Transaction(
+            merchantName: "PAYROLL DEPOSIT", originalDescription: "PAYROLL DIRECT DEPOSIT",
+            amount: 2000, transactionDate: date(2026, 8, 1),
+            transactionDirection: .credit, accountType: .debit
+        )
+        context.insert(paycheck)
+        try context.save()
+        XCTAssertFalse(paycheck.isIncome)
+
+        SeedDataService.tagLikelyIncomeIfNeeded(modelContext: context)
+        XCTAssertTrue(paycheck.isIncome)
+
+        // A later manual un-mark survives a second pass.
+        paycheck.isIncome = false
+        SeedDataService.tagLikelyIncomeIfNeeded(modelContext: context)
+        XCTAssertFalse(paycheck.isIncome)
+    }
+
     func testNeverBlindlyFlipsAmountWhenSignMatchesConvention() {
         // Credit-card purchase already positive → taken at face value, no flip.
         let cc = normalizer.normalize(originalAmount: 20, accountType: .creditCard, description: "CAFE")

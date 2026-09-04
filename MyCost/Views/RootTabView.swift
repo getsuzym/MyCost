@@ -69,6 +69,7 @@ struct RootTabView: View {
         .task {
             SeedDataService.seedDefaultCategoriesIfNeeded(modelContext: modelContext)
             SeedDataService.countAllTransactionsByDefaultIfNeeded(modelContext: modelContext)
+            SeedDataService.tagLikelyIncomeIfNeeded(modelContext: modelContext)
         }
     }
 

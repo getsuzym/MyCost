@@ -213,6 +213,20 @@ struct DashboardView: View {
                     .accessibilityIdentifier("dashboard.monthlyTotal")
             }
 
+            if summary.incomeTotal > 0 {
+                HStack(spacing: 14) {
+                    Label(Formatters.currencyString(for: summary.incomeTotal), systemImage: "arrow.down.left")
+                        .foregroundStyle(Theme.positive)
+                    Label(Formatters.currencyString(for: summary.netTotal), systemImage: "equal")
+                        .foregroundStyle(summary.netTotal >= 0 ? Theme.positive : Theme.warning)
+                    Spacer(minLength: 0)
+                }
+                .font(.footnote.weight(.medium).monospacedDigit())
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Earned \(Formatters.currencyString(for: summary.incomeTotal)), net \(Formatters.currencyString(for: summary.netTotal))")
+                .accessibilityIdentifier("dashboard.incomeNet")
+            }
+
             HStack(spacing: 10) {
                 NavigationLink {
                     MonthDetailView(month: monthAnchor)

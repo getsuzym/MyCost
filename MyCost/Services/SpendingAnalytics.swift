@@ -21,6 +21,10 @@ struct MonthlySpendingSummary {
     let recurringTotal: Decimal
     let nonRecurringTotal: Decimal
     let expectedMonthlyRecurringTotal: Decimal
+    /// Sum of the month's non-excluded `isIncome` transactions.
+    let incomeTotal: Decimal
+    /// `incomeTotal - total`.
+    var netTotal: Decimal { incomeTotal - total }
     let categoryTotals: [CategorySpend]
     let highestCategory: CategorySpend?
     let lowestCategory: CategorySpend?
@@ -44,6 +48,7 @@ struct SpendingAnalytics {
                 recurringTotal: 0,
                 nonRecurringTotal: 0,
                 expectedMonthlyRecurringTotal: 0,
+                incomeTotal: 0,
                 categoryTotals: [],
                 highestCategory: nil,
                 lowestCategory: nil
@@ -73,6 +78,12 @@ struct SpendingAnalytics {
         let recurringTotal = recurringTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
         let nonRecurringTotal = nonRecurringTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
         let total = includedTransactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        let incomeTotal = transactions
+            .filter {
+                $0.isIncome && !$0.isExcluded &&
+                $0.transactionDate >= interval.start && $0.transactionDate < interval.end
+            }
+            .reduce(Decimal.zero) { $0 + $1.incomeAmount }
         let expectedMonthlyRecurringTotal = recurringPayments
             .filter(\.isActive)
             .reduce(Decimal.zero) { total, recurringPayment in
@@ -103,6 +114,7 @@ struct SpendingAnalytics {
             recurringTotal: recurringTotal,
             nonRecurringTotal: nonRecurringTotal,
             expectedMonthlyRecurringTotal: expectedMonthlyRecurringTotal,
+            incomeTotal: incomeTotal,
             categoryTotals: categoryTotals,
             highestCategory: categoryTotals.first,
             lowestCategory: categoryTotals.last

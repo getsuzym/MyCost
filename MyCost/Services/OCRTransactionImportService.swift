@@ -86,6 +86,7 @@ struct OCRTransactionImportService {
                     category: category
                 )
                 transaction.isRecurring = draft.isRecurring
+                transaction.isIncome = normalized.isLikelyIncome
                 modelContext.insert(transaction)
                 outcome.insertedTransactionIDs.append(transaction.id)
                 if normalized.needsReview { outcome.reviewFlaggedCount += 1 }

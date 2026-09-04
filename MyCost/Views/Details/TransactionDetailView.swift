@@ -20,6 +20,7 @@ struct TransactionDetailView: View {
             }
 
             Section("Options") {
+                LabeledContent("Type", value: transaction.isIncome ? "Income" : "Spending")
                 LabeledContent("Excluded", value: transaction.isExcluded ? "Yes" : "No")
                 if transaction.isExcluded, !transaction.excludedReason.isEmpty {
                     LabeledContent("Reason", value: transaction.excludedReason)

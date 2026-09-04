@@ -32,6 +32,7 @@ struct TransactionEditorView: View {
     @State private var selectedCategoryID: UUID?
     @State private var isExcluded = false
     @State private var excludedReason = ""
+    @State private var isIncome = false
     @State private var isRecurring = false
     @State private var recurrenceFrequency: RecurrenceFrequency = .monthly
     @State private var customIntervalDays = 30
@@ -109,31 +110,38 @@ struct TransactionEditorView: View {
             }
 
             Section {
-                Toggle("Counts as spending", isOn: Binding(
-                    get: { countsAsSpending },
-                    set: { newValue in
-                        // Only a real user tap routes through here — programmatic
-                        // seeding in loadInitialValues sets `countsAsSpending`
-                        // directly and doesn't hit this closure.
-                        countsAsSpending = newValue
-                        directionIsUserSet = true
-                        userChangedSpendingToggle = true
-                    }
-                ))
-                .accessibilityIdentifier("transactionEditor.countsAsSpending")
-                LabeledContent("Spending amount") {
-                    Text(Formatters.currencyString(for: countsAsSpending ? normalization.normalizedAmount : 0))
+                Toggle("Income (money in)", isOn: $isIncome)
+                    .accessibilityIdentifier("transactionEditor.income")
+
+                if !isIncome {
+                    Toggle("Counts as spending", isOn: Binding(
+                        get: { countsAsSpending },
+                        set: { newValue in
+                            // Only a real user tap routes through here — programmatic
+                            // seeding in loadInitialValues sets `countsAsSpending`
+                            // directly and doesn't hit this closure.
+                            countsAsSpending = newValue
+                            directionIsUserSet = true
+                            userChangedSpendingToggle = true
+                        }
+                    ))
+                    .accessibilityIdentifier("transactionEditor.countsAsSpending")
+                }
+
+                LabeledContent(isIncome ? "Income amount" : "Spending amount") {
+                    Text(Formatters.currencyString(for: isIncome ? abs(normalization.normalizedAmount) : (countsAsSpending ? normalization.normalizedAmount : 0)))
                         .foregroundStyle(.secondary)
                 }
-                if !directionIsUserSet, normalization.needsReview {
-                    Label("The sign is unusual for a \(accountType.label) account — confirm whether this is spending.", systemImage: "exclamationmark.triangle")
+
+                if !isIncome, !directionIsUserSet, normalization.needsReview {
+                    Label("This looks like a payment or deposit — turn on Income, or off \u{201C}Counts as spending\u{201D}, if it isn't a purchase.", systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
             } header: {
                 Text("Direction")
             } footer: {
-                Text("Credit-card purchases are positive spending; debit purchases are negative. Payments, transfers, and deposits don't count as spending.")
+                Text("Every transaction counts as spending by default. Mark it Income for a deposit / paycheck, or turn off \u{201C}Counts as spending\u{201D} for a transfer you don't want in the totals.")
             }
 
             Section("Category") {
@@ -368,6 +376,7 @@ struct TransactionEditorView: View {
         transactionDate = transaction.transactionDate
         status = transaction.status
         selectedCategoryID = transaction.category?.id
+        isIncome = transaction.isIncome
         isExcluded = transaction.isExcluded
         excludedReason = transaction.excludedReason
         isRecurring = transaction.isRecurring
@@ -443,6 +452,7 @@ struct TransactionEditorView: View {
                 selectedCategoryID: selectedCategoryID ?? ruleApplication?.category?.id,
                 isExcluded: isExcluded,
                 excludedReason: isExcluded ? excludedReason : "",
+                isIncome: isIncome,
                 isRecurring: isRecurring,
                 recurrenceFrequency: recurrenceFrequency,
                 customIntervalDays: customIntervalDays,
@@ -483,6 +493,7 @@ struct TransactionEditorView: View {
             transaction.transactionDate = transactionDate
             transaction.status = status
             transaction.category = selectedCategory
+            transaction.isIncome = isIncome
             transaction.isExcluded = isExcluded
             transaction.excludedReason = isExcluded ? excludedReason : ""
             transaction.isRecurring = isRecurring
@@ -580,6 +591,7 @@ struct TransactionEditorView: View {
             isExcluded: draft.isExcluded,
             excludedReason: draft.excludedReason,
             isRecurring: draft.isRecurring,
+            isIncome: draft.isIncome,
             duplicateState: duplicateState,
             note: draft.note,
             category: selectedCategory
@@ -710,6 +722,7 @@ private struct ManualTransactionDraft {
     let selectedCategoryID: UUID?
     let isExcluded: Bool
     let excludedReason: String
+    let isIncome: Bool
     let isRecurring: Bool
     let recurrenceFrequency: RecurrenceFrequency
     let customIntervalDays: Int

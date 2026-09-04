@@ -148,6 +148,8 @@ private struct MonthListRow: View {
                 }
                 if transaction.isExcluded {
                     Text("· Excluded").foregroundStyle(.orange)
+                } else if transaction.isIncome {
+                    Text("· Income").foregroundStyle(Theme.positive)
                 } else if transaction.spendingAmount == 0, transaction.amount != 0 {
                     Text("· Not counted").foregroundStyle(.orange)
                 }
@@ -155,6 +157,6 @@ private struct MonthListRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .opacity(transaction.isExcluded || (transaction.spendingAmount == 0 && transaction.amount != 0) ? 0.5 : 1)
+        .opacity(transaction.isExcluded || (!transaction.isIncome && transaction.spendingAmount == 0 && transaction.amount != 0) ? 0.5 : 1)
     }
 }

@@ -33,6 +33,9 @@ struct NormalizedTransaction: Equatable {
     /// deposit — the editor shows a soft hint so the user can un-count it if
     /// they want. It does **not** exclude the transaction on its own.
     var needsReview: Bool
+    /// Money coming *in* that isn't a refund — a deposit / payroll / credit.
+    /// Import pre-sets `Transaction.isIncome` from this; the user can flip it.
+    var isLikelyIncome: Bool
 }
 
 /// Turns a bank-displayed signed amount into a consistent spending value using
@@ -47,15 +50,16 @@ struct TransactionNormalizer {
     ) -> NormalizedTransaction {
         let text = description.lowercased()
         let refundLike = Self.matches(text, Self.refundKeywords)
+        let incomeLike = Self.matches(text, Self.incomeKeywords)
         let magnitude = abs(originalAmount)
 
         if originalAmount == 0 {
-            return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: true, needsReview: false)
+            return NormalizedTransaction(normalizedAmount: 0, direction: .unknown, countsAsSpending: true, needsReview: false, isLikelyIncome: false)
         }
 
         // A refund/credit reduces spending — the one automatic sign flip.
         if refundLike {
-            return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false)
+            return NormalizedTransaction(normalizedAmount: -magnitude, direction: .credit, countsAsSpending: true, needsReview: false, isLikelyIncome: false)
         }
 
         // Everything else is spending at its magnitude. `direction` /
@@ -69,21 +73,26 @@ struct TransactionNormalizer {
                 normalizedAmount: magnitude,
                 direction: originalAmount > 0 ? .debit : .credit,
                 countsAsSpending: true,
-                needsReview: originalAmount < 0
+                needsReview: originalAmount < 0,
+                isLikelyIncome: false
             )
         case .debit:
+            let moneyIn = originalAmount > 0
             return NormalizedTransaction(
                 normalizedAmount: magnitude,
-                direction: originalAmount < 0 ? .debit : .credit,
+                direction: moneyIn ? .credit : .debit,
                 countsAsSpending: true,
-                needsReview: originalAmount > 0
+                needsReview: moneyIn,
+                // Money into a chequing account that reads like a deposit / payroll.
+                isLikelyIncome: moneyIn && incomeLike
             )
         case .other:
             return NormalizedTransaction(
                 normalizedAmount: magnitude,
-                direction: .debit,
+                direction: originalAmount > 0 && incomeLike ? .credit : .debit,
                 countsAsSpending: true,
-                needsReview: false
+                needsReview: false,
+                isLikelyIncome: originalAmount > 0 && incomeLike
             )
         }
     }
@@ -93,6 +102,13 @@ struct TransactionNormalizer {
     private static let refundKeywords = [
         "refund", "return", "reversal", "reversed", "credit voucher", "chargeback",
         "cashback", "cash back", "adjustment credit", "rebate", "price adjustment"
+    ]
+
+    private static let incomeKeywords = [
+        "payroll", "direct deposit", "direct dep", "dir dep", "deposit",
+        "salary", "payout", "interest paid", "interest earned", "dividend",
+        "e-transfer from", "e-transfer received", "transfer from", "gov canada",
+        "govt", "cra", "irs", "benefit", "pension"
     ]
 
     private static func matches(_ text: String, _ keywords: [String]) -> Bool {

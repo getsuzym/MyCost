@@ -30,6 +30,34 @@ enum SeedDataService {
         modelContext.saveOrLog("migration countAllByDefault.v1")
     }
 
+    /// One-time: pre-tag existing deposits / payroll as income so a chequing
+    /// import stops counting the paycheck as spending. Only touches rows that
+    /// clearly read as income; the user can still flip any transaction.
+    @MainActor
+    static func tagLikelyIncomeIfNeeded(modelContext: ModelContext) {
+        let key = "mycost.migration.incomeSplit.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        defer { UserDefaults.standard.set(true, forKey: key) }
+
+        let transactions = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? []
+        guard !transactions.isEmpty else { return }
+
+        let normalizer = TransactionNormalizer()
+        var changed = false
+        for transaction in transactions where !transaction.isIncome {
+            let normalized = normalizer.normalize(
+                originalAmount: transaction.amount,
+                accountType: transaction.accountType,
+                description: transaction.originalDescription.isEmpty ? transaction.merchantName : transaction.originalDescription
+            )
+            if normalized.isLikelyIncome {
+                transaction.isIncome = true
+                changed = true
+            }
+        }
+        if changed { modelContext.saveOrLog("migration incomeSplit.v1") }
+    }
+
     @MainActor
     static func seedDefaultCategoriesIfNeeded(modelContext: ModelContext) {
         let categories = (try? modelContext.fetch(FetchDescriptor<Category>())) ?? []

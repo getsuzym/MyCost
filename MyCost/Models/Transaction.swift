@@ -175,6 +175,9 @@ final class Transaction {
     var isExcluded: Bool
     var excludedReason: String
     var isRecurring: Bool
+    /// Money *in* — a deposit / paycheck / credit. Income rows don't count as
+    /// spending; they feed `MonthlySpendingSummary.incomeTotal` instead.
+    var isIncome: Bool = false
     var duplicateState: DuplicateState
     var note: String
     var createdAt: Date
@@ -213,6 +216,7 @@ final class Transaction {
         isExcluded: Bool = false,
         excludedReason: String = "",
         isRecurring: Bool = false,
+        isIncome: Bool = false,
         duplicateState: DuplicateState = .unique,
         note: String = "",
         normalizedAmount: Decimal? = nil,
@@ -237,6 +241,7 @@ final class Transaction {
         self.isExcluded = isExcluded
         self.excludedReason = excludedReason
         self.isRecurring = isRecurring
+        self.isIncome = isIncome
         self.duplicateState = duplicateState
         self.note = note
         self.normalizedAmount = normalizedAmount ?? amount
@@ -268,17 +273,25 @@ final class Transaction {
     /// Whether this row is part of spending totals. **Every transaction counts
     /// by default** — `countsAsSpending` is only ever `false` because the user
     /// turned it off in the editor (which also sets `spendingCountOverridden`).
+    /// Income rows never count as spending.
     var contributesToSpending: Bool {
-        countsAsSpending
+        countsAsSpending && !isIncome
     }
 
-    /// The value analytics sum. `0` only when the user un-counted the row.
-    /// A normalized row uses `normalizedAmount` (positive purchase / negative
-    /// refund); a row that never went through the normalizer (`.unknown`
-    /// direction — test fixtures, legacy data) uses the bank amount as-is.
+    /// The value analytics sum for spending. `0` for income and for rows the
+    /// user un-counted. A normalized row uses `normalizedAmount` (positive
+    /// purchase / negative refund); a row that never went through the
+    /// normalizer (`.unknown` direction) uses the bank amount as-is.
     var spendingAmount: Decimal {
-        guard countsAsSpending else { return 0 }
+        guard contributesToSpending else { return 0 }
         return transactionDirection == .unknown ? amount : normalizedAmount
+    }
+
+    /// The value analytics sum for income — `0` unless `isIncome`.
+    var incomeAmount: Decimal {
+        guard isIncome else { return 0 }
+        if transactionDirection == .unknown { return abs(amount) }
+        return abs(normalizedAmount == 0 ? amount : normalizedAmount)
     }
 
     /// Applies a `TransactionNormalizer` result to the stored fields.
