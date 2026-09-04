@@ -16,6 +16,8 @@ struct DashboardView: View {
     @State private var monthAnchor = Date()
     /// The "Months" list is collapsed by default and remembers its state.
     @AppStorage("dashboard.monthsExpanded") private var monthsExpanded = false
+    /// Mirrors `DataPortabilityView`'s tracking of the last JSON export.
+    @AppStorage("mycost.lastBackupExportAt") private var lastBackupExportTimestamp: Double = 0
 
     private let analytics = SpendingAnalytics()
     private let monthly = MonthlyTransactionsService()
@@ -31,6 +33,15 @@ struct DashboardView: View {
     /// Month-start dates that actually have transactions, newest first.
     private var monthsWithTransactions: [Date] {
         monthly.monthsRepresented(in: transactions)
+    }
+
+    /// There's real data to lose and no iCloud sync yet, so nudge toward a
+    /// manual backup once it's overdue. Never shown on an empty, freshly
+    /// installed app.
+    private var showsBackupReminder: Bool {
+        guard !transactions.isEmpty else { return false }
+        let lastBackupDate = lastBackupExportTimestamp == 0 ? nil : Date(timeIntervalSinceReferenceDate: lastBackupExportTimestamp)
+        return DataPortabilityService.isBackupOverdue(lastBackupAt: lastBackupDate)
     }
 
     private func color(forCategory name: String) -> Color {
@@ -58,6 +69,20 @@ struct DashboardView: View {
                     .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 6, trailing: 16))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
+            }
+
+            if showsBackupReminder {
+                Section {
+                    NavigationLink {
+                        DataPortabilityView()
+                    } label: {
+                        Label("Back up your data", systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.callout)
+                    }
+                    .accessibilityIdentifier("dashboard.backupReminder")
+                } footer: {
+                    Text("It's been over 30 days since your last backup, and MyCost doesn't sync to iCloud yet.")
+                }
             }
 
             Section {
@@ -326,6 +351,13 @@ private struct SpendingTrendChart: View {
         Calendar.current.isDate(month, equalTo: highlightedMonth, toGranularity: .month)
     }
 
+    /// Swift Charts marks aren't individually accessible to VoiceOver, so the
+    /// whole chart collapses to one element carrying a composed summary instead
+    /// of being a silent stop on the swipe order.
+    private var accessibilitySummary: String {
+        months.map { "\($0.shortLabel) \(Formatters.currencyString(for: $0.spent))" }.joined(separator: ", ")
+    }
+
     var body: some View {
         Chart(months) { point in
             BarMark(
@@ -349,6 +381,9 @@ private struct SpendingTrendChart: View {
             AxisMarks(format: .currency(code: Formatters.currency.currencyCode ?? "USD").precision(.fractionLength(0)))
         }
         .chartLegend(.hidden)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Spending trend, last \(months.count) months")
+        .accessibilityValue(accessibilitySummary)
     }
 }
 
@@ -361,6 +396,13 @@ private struct SpendingDistributionChart: View {
 
     private var slices: [CategorySpend] {
         categories.filter { $0.amount > 0 }
+    }
+
+    /// Swift Charts marks aren't individually accessible to VoiceOver, so the
+    /// whole chart collapses to one element carrying a composed summary — the
+    /// exact-dollar detail per category still lives in the text rows below.
+    private var accessibilitySummary: String {
+        slices.map { "\($0.categoryName) \(Formatters.percentString($0.percentageOfTotal))" }.joined(separator: ", ")
     }
 
     var body: some View {
@@ -383,6 +425,9 @@ private struct SpendingDistributionChart: View {
                 range: slices.map { colorForName($0.categoryName) }
             )
             .chartLegend(position: .trailing, alignment: .center, spacing: 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Category breakdown")
+            .accessibilityValue(accessibilitySummary)
         }
     }
 }

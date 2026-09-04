@@ -5,6 +5,10 @@ import SwiftUI
 struct MoreView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
     @EnvironmentObject private var nav: AppNavigationModel
+    @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
+    @State private var showsNoPasscodeAlert = false
+
+    private let lockService = AppLockService()
 
     var body: some View {
         List {
@@ -56,8 +60,31 @@ struct MoreView: View {
                 }
                 .accessibilityIdentifier("more.data")
             }
+
+            Section {
+                Toggle("Require Face ID / Passcode", isOn: Binding(
+                    get: { appLockEnabled },
+                    set: { newValue in
+                        if newValue, !lockService.canAuthenticate() {
+                            showsNoPasscodeAlert = true
+                            return
+                        }
+                        appLockEnabled = newValue
+                    }
+                ))
+                .accessibilityIdentifier("more.appLock")
+            } header: {
+                Text("Privacy")
+            } footer: {
+                Text("Locks MyCost whenever it leaves the foreground. Unlocks with Face ID, Touch ID, or your device passcode.")
+            }
         }
         .navigationTitle("More")
         .themedListBackground()
+        .alert("Can't Enable App Lock", isPresented: $showsNoPasscodeAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Set a passcode for this device in Settings first.")
+        }
     }
 }

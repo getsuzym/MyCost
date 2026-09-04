@@ -13,6 +13,20 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     var message: String
     var style: Style
+    /// An optional inline action (e.g. "Undo"). `action` isn't `Equatable`, so
+    /// equality is by `id` alone — each toast already gets a fresh id, and
+    /// that's the only identity `ToastCenter`/`ToastHost` care about.
+    var actionLabel: String?
+    var action: (() -> Void)?
+
+    init(message: String, style: Style, actionLabel: String? = nil, action: (() -> Void)? = nil) {
+        self.message = message
+        self.style = style
+        self.actionLabel = actionLabel
+        self.action = action
+    }
+
+    static func == (lhs: Toast, rhs: Toast) -> Bool { lhs.id == rhs.id }
 }
 
 /// One app-wide, non-blocking feedback channel. CRUD sites call `success` /
@@ -50,7 +64,9 @@ final class ToastCenter: ObservableObject {
         current = toast
         announce(toast.message)
 
-        let duration = toast.style == .error ? errorDuration : successDuration
+        // An actionable toast (e.g. "Undo") gets the longer duration regardless
+        // of style, so it outlives TrashBin's grace period.
+        let duration = (toast.style == .error || toast.action != nil) ? errorDuration : successDuration
         dismissTask = Task { [weak self, sleep] in
             await sleep(duration)
             guard !Task.isCancelled else { return }

@@ -3,6 +3,9 @@ import SwiftUI
 /// The little banner. Non-interactive except tap-to-dismiss; never blocks input.
 struct ToastView: View {
     let toast: Toast
+    /// Called when the action button is tapped, after `toast.action` runs —
+    /// lets the host dismiss immediately instead of waiting for auto-dismiss.
+    var onAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -11,6 +14,16 @@ struct ToastView: View {
             Text(toast.message)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
+            if let actionLabel = toast.actionLabel, let action = toast.action {
+                Button(actionLabel) {
+                    action()
+                    onAction?()
+                }
+                .font(.callout.weight(.bold))
+                .foregroundStyle(.white)
+                .underline()
+                .accessibilityIdentifier("toast.action")
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)
@@ -18,9 +31,7 @@ struct ToastView: View {
         .background(background, in: Capsule())
         .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
         .padding(.horizontal, 24)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(toast.message)
-        .accessibilityAddTraits(.isStaticText)
+        .modifier(ToastAccessibility(toast: toast))
     }
 
     private var icon: String {
@@ -40,6 +51,24 @@ struct ToastView: View {
     }
 }
 
+/// Combining into one static-text element (the old behavior) is right for a
+/// plain toast, but would swallow the "Undo" button's own accessibility action
+/// — an actionable toast stays as separate elements instead.
+private struct ToastAccessibility: ViewModifier {
+    let toast: Toast
+
+    func body(content: Content) -> some View {
+        if toast.action != nil {
+            content.accessibilityElement(children: .contain)
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(toast.message)
+                .accessibilityAddTraits(.isStaticText)
+        }
+    }
+}
+
 private struct ToastHost: ViewModifier {
     @ObservedObject var center: ToastCenter
 
@@ -51,7 +80,7 @@ private struct ToastHost: ViewModifier {
                 // List mutation happening at the same time.
                 ZStack {
                     if let toast = center.current {
-                        ToastView(toast: toast)
+                        ToastView(toast: toast, onAction: { center.dismiss() })
                             .padding(.bottom, 6)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .onTapGesture { center.dismiss() }

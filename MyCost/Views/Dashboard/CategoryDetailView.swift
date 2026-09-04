@@ -12,6 +12,7 @@ struct CategoryDetailView: View {
 
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var allTransactions: [Transaction]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @ObservedObject private var trashBin = TrashBin.shared
 
     @State private var monthAnchor: Date
     @State private var editingTransaction: Transaction?
@@ -30,11 +31,16 @@ struct CategoryDetailView: View {
         Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
     }
 
+    /// Excludes rows mid-way through an undoable delete.
+    private var visibleTransactions: [Transaction] {
+        allTransactions.filter { !trashBin.contains($0.id) }
+    }
+
     /// One row per whole non-split transaction in this category, or per
     /// matching split of a split one — so a $120 charge split $80/$40 across
     /// two categories shows its $80 portion here, not the full $120.
     private var lineItems: [CategoryLineItem] {
-        analytics.categoryLineItems(categoryName: categoryName, inMonthContaining: monthAnchor, transactions: allTransactions)
+        analytics.categoryLineItems(categoryName: categoryName, inMonthContaining: monthAnchor, transactions: visibleTransactions)
     }
 
     private var categoryTotal: Decimal {
@@ -47,7 +53,7 @@ struct CategoryDetailView: View {
     /// shown on the Dashboard breakdown.
     private var percentageOfMonth: Double {
         SpendingAnalytics()
-            .monthlySummary(for: monthAnchor, transactions: allTransactions)
+            .monthlySummary(for: monthAnchor, transactions: visibleTransactions)
             .categoryTotals.first { $0.categoryName == categoryName }?
             .percentageOfTotal ?? 0
     }
@@ -159,13 +165,7 @@ struct CategoryDetailView: View {
         ) {
             Button("Delete", role: .destructive) {
                 if let transaction = transactionPendingDeletion {
-                    modelContext.delete(transaction)
-                    do {
-                        try modelContext.save()
-                        ToastCenter.shared.success(CRUDFeedback.deleted("transaction"))
-                    } catch {
-                        ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
-                    }
+                    TrashBin.shared.deleteTransactions([transaction], modelContext: modelContext)
                 }
                 transactionPendingDeletion = nil
             }

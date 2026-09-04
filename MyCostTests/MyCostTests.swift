@@ -1680,6 +1680,49 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(center.current == nil || center.current?.message == "C")
     }
 
+    // MARK: - Undoable delete (TrashBin)
+
+    func testTrashBinCancelPreventsTheDeferredDelete() async {
+        let bin = TrashBin(delay: .zero, sleep: { _ in try? await Task.sleep(for: .milliseconds(1)) })
+        let id = UUID()
+        var performed = false
+        let token = bin.scheduleDeletion(ids: [id]) { performed = true }
+        XCTAssertTrue(bin.contains(id))
+
+        bin.cancel(token)
+        XCTAssertFalse(bin.contains(id))
+
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(performed)
+    }
+
+    func testTrashBinPerformsTheDeleteAfterTheGracePeriodUnlessCancelled() async {
+        let bin = TrashBin(delay: .zero, sleep: { _ in })
+        let id = UUID()
+        var performed = false
+        bin.scheduleDeletion(ids: [id]) { performed = true }
+        XCTAssertTrue(bin.contains(id))
+
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(performed)
+        XCTAssertFalse(bin.contains(id))
+    }
+
+    func testDeleteTransactionsDefersTheActualDeleteAndOffersUndo() async throws {
+        let bin = TrashBin(delay: .zero, sleep: { _ in })
+        let transaction = insertTransaction("Costco", amount: 50, on: date(2026, 8, 3))
+        try context.save()
+
+        bin.deleteTransactions([transaction], modelContext: context)
+        // Still in the store immediately — only the UI-level filter hides it.
+        XCTAssertEqual(try allTransactions().count, 1)
+        XCTAssertTrue(bin.contains(transaction.id))
+        XCTAssertEqual(ToastCenter.shared.current?.actionLabel, "Undo")
+
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(try allTransactions().count, 0)
+    }
+
     // MARK: - Stable ForEach identity (add/delete diff-crash regression)
 
     func testCategorySpendIdentityIsStableAcrossRecomputes() {
@@ -3324,6 +3367,13 @@ final class MyCostTests: XCTestCase {
     }
 
     // MARK: - Export & backup
+
+    func testBackupOverdueAfterThresholdOrNever() {
+        let now = date(2026, 9, 4)
+        XCTAssertTrue(DataPortabilityService.isBackupOverdue(lastBackupAt: nil, now: now))
+        XCTAssertFalse(DataPortabilityService.isBackupOverdue(lastBackupAt: date(2026, 8, 20), now: now)) // 15 days
+        XCTAssertTrue(DataPortabilityService.isBackupOverdue(lastBackupAt: date(2026, 7, 1), now: now))   // 65 days
+    }
 
     func testTransactionsCSVHasHeaderRowAndQuotesTrickyFields() throws {
         let dining = makeCategory("Dining", sortOrder: 0)

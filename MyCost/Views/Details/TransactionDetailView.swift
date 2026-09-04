@@ -99,14 +99,10 @@ struct TransactionDetailView: View {
     }
 
     private func deleteTransaction() {
-        modelContext.delete(transaction)
-        do {
-            try modelContext.save()
-            ToastCenter.shared.success(CRUDFeedback.deleted("transaction"))
-            dismiss()
-        } catch {
-            ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
-        }
+        // Leave right away — the actual delete is deferred (Undo), but there's
+        // nothing left for this screen to show either way.
+        dismiss()
+        TrashBin.shared.deleteTransactions([transaction], modelContext: modelContext)
     }
 }
 

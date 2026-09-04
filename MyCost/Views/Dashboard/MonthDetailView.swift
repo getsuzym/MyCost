@@ -10,6 +10,7 @@ struct MonthDetailView: View {
 
     private let month: Date
     @Query private var monthTransactions: [Transaction]
+    @ObservedObject private var trashBin = TrashBin.shared
 
     @State private var isAddingTransaction = false
     @State private var editingTransaction: Transaction?
@@ -30,23 +31,29 @@ struct MonthDetailView: View {
         )
     }
 
+    /// Excludes rows mid-way through an undoable delete.
+    private var visibleTransactions: [Transaction] {
+        monthTransactions.filter { !trashBin.contains($0.id) }
+    }
+
     private var summary: MonthlySpendingSummary {
-        analytics.monthlySummary(for: month, transactions: monthTransactions)
+        analytics.monthlySummary(for: month, transactions: visibleTransactions)
     }
 
     var body: some View {
         let summary = summary
+        let rows = visibleTransactions
         return List {
             Section {
-                summaryHeader(summary)
+                summaryHeader(summary, count: rows.count)
             }
 
             Section {
-                if monthTransactions.isEmpty {
+                if rows.isEmpty {
                     Text("No transactions this month. Add one with +.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(monthTransactions) { transaction in
+                ForEach(rows) { transaction in
                     NavigationLink {
                         TransactionDetailView(transaction: transaction)
                     } label: {
@@ -67,7 +74,7 @@ struct MonthDetailView: View {
                     }
                 }
             } header: {
-                Text("\(monthTransactions.count) transaction\(monthTransactions.count == 1 ? "" : "s")")
+                Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s")")
             }
         }
         .navigationTitle(Formatters.month.string(from: month))
@@ -103,13 +110,7 @@ struct MonthDetailView: View {
         ) {
             Button("Delete", role: .destructive) {
                 if let transaction = transactionPendingDeletion {
-                    modelContext.delete(transaction)
-                    do {
-                        try modelContext.save()
-                        ToastCenter.shared.success(CRUDFeedback.deleted("transaction"))
-                    } catch {
-                        ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
-                    }
+                    TrashBin.shared.deleteTransactions([transaction], modelContext: modelContext)
                 }
                 transactionPendingDeletion = nil
             }
@@ -132,7 +133,7 @@ struct MonthDetailView: View {
     }
 
     @ViewBuilder
-    private func summaryHeader(_ summary: MonthlySpendingSummary) -> some View {
+    private func summaryHeader(_ summary: MonthlySpendingSummary, count: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(Formatters.currencyString(for: summary.total))
                 .font(.title2.bold())
@@ -141,7 +142,7 @@ struct MonthDetailView: View {
             HStack {
                 summaryPill("Recurring", summary.recurringTotal)
                 summaryPill("Non-Recurring", summary.nonRecurringTotal)
-                summaryPill("Count", nil, text: "\(monthTransactions.count)")
+                summaryPill("Count", nil, text: "\(count)")
             }
         }
         .padding(.vertical, 4)

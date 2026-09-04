@@ -39,6 +39,16 @@ struct DataPortabilityService {
         return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
+    /// There's no iCloud sync yet, so a JSON export is the only way to not lose
+    /// everything if the phone is lost or reset. `true` when it's been over
+    /// `thresholdDays` since the last export (or there's never been one and the
+    /// app has had time to accumulate real data).
+    static func isBackupOverdue(lastBackupAt: Date?, now: Date = .now, thresholdDays: Int = 30) -> Bool {
+        guard let lastBackupAt else { return true }
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -thresholdDays, to: now) else { return false }
+        return lastBackupAt < cutoff
+    }
+
     // MARK: - JSON backup
 
     struct Backup: Codable {

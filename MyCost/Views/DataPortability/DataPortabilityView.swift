@@ -17,8 +17,21 @@ struct DataPortabilityView: View {
     @State private var isImporting = false
     @State private var pendingRestore: DataPortabilityService.Backup?
     @State private var message: String?
+    /// Seconds since the reference date — 0 means "never". Set whenever a
+    /// backup export is prepared (Export CSV doesn't count; only the full
+    /// JSON backup is a real safety net).
+    @AppStorage("mycost.lastBackupExportAt") private var lastBackupExportTimestamp: Double = 0
 
     private let service = DataPortabilityService()
+
+    private var lastBackupDate: Date? {
+        lastBackupExportTimestamp == 0 ? nil : Date(timeIntervalSinceReferenceDate: lastBackupExportTimestamp)
+    }
+
+    private var lastBackupSummary: String {
+        guard let lastBackupDate else { return "Never backed up" }
+        return "Last backup: \(Formatters.shortDate.string(from: lastBackupDate))"
+    }
 
     private var timestamp: String {
         let f = DateFormatter()
@@ -45,7 +58,7 @@ struct DataPortabilityView: View {
             } header: {
                 Text("Export")
             } footer: {
-                Text("\(transactions.count) transaction\(transactions.count == 1 ? "" : "s"). The CSV is for spreadsheets; the JSON backup restores everything (categories, rules, recurring, budgets).")
+                Text("\(transactions.count) transaction\(transactions.count == 1 ? "" : "s"). The CSV is for spreadsheets; the JSON backup restores everything (categories, rules, recurring, budgets). \(lastBackupSummary).")
             }
 
             Section {
@@ -109,6 +122,7 @@ struct DataPortabilityView: View {
         )
         do {
             writeTemp(try service.encode(backup), name: "MyCost-backup-\(timestamp).json")
+            lastBackupExportTimestamp = Date.now.timeIntervalSinceReferenceDate
         } catch {
             message = "Couldn't build the backup: \(error.localizedDescription)"
         }

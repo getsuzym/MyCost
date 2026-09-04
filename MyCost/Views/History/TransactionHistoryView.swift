@@ -6,6 +6,7 @@ struct TransactionHistoryView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @Query private var allTags: [Tag]
+    @ObservedObject private var trashBin = TrashBin.shared
 
     @State private var isAddingTransaction = false
     @State private var categoryFilter: CategoryFilter = .all
@@ -33,8 +34,14 @@ struct TransactionHistoryView: View {
         Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
     }
 
+    /// Excludes rows mid-way through an undoable delete — they disappear the
+    /// instant the user swipes/taps Delete, not after the grace period.
+    private var visibleTransactions: [Transaction] {
+        transactions.filter { !trashBin.contains($0.id) }
+    }
+
     private var scopedTransactions: [Transaction] {
-        scopeIsMonth ? monthly.transactions(inMonthContaining: monthAnchor, from: transactions) : transactions
+        scopeIsMonth ? monthly.transactions(inMonthContaining: monthAnchor, from: visibleTransactions) : visibleTransactions
     }
 
     private var filteredTransactions: [Transaction] {
@@ -188,12 +195,6 @@ struct TransactionHistoryView: View {
     private func deleteTransactions(at offsets: IndexSet) {
         let toDelete = filteredTransactions.elements(at: offsets)
         guard !toDelete.isEmpty else { return }
-        toDelete.forEach(modelContext.delete)
-        do {
-            try modelContext.save()
-            ToastCenter.shared.success(CRUDFeedback.deleted("transaction", count: toDelete.count))
-        } catch {
-            ToastCenter.shared.error(CRUDFeedback.deleteFailure("transaction"))
-        }
+        trashBin.deleteTransactions(toDelete, modelContext: modelContext)
     }
 }

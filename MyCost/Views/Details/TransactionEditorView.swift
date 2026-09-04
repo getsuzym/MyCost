@@ -54,6 +54,7 @@ struct TransactionEditorView: View {
     /// (its `Binding.set` fires) — not when `loadInitialValues` seeds the state.
     /// Drives `Transaction.spendingCountOverridden`.
     @State private var userChangedSpendingToggle = false
+    @FocusState private var isMerchantFieldFocused: Bool
     @State private var validationMessage: String?
     @State private var pendingManualDraft: ManualTransactionDraft?
     @State private var pendingDuplicateTransactionID: UUID?
@@ -76,6 +77,26 @@ struct TransactionEditorView: View {
     }
 
     private var splitRemaining: Decimal { splitTargetAmount - splitRowsSum }
+
+    /// Distinct past merchant names starting with what's typed so far — up to
+    /// 5, excluding the exact current text. Empty text shows nothing (not the
+    /// whole history).
+    private var merchantSuggestions: [String] {
+        let query = merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        var seen = Set<String>()
+        var results: [String] = []
+        for transaction in transactions {
+            let name = transaction.merchantName
+            guard name.localizedCaseInsensitiveCompare(query) != .orderedSame,
+                  name.range(of: query, options: [.caseInsensitive]) != nil,
+                  seen.insert(name.lowercased()).inserted
+            else { continue }
+            results.append(name)
+            if results.count == 5 { break }
+        }
+        return results
+    }
 
     /// Live account-type-aware interpretation of the entered amount.
     private var normalization: NormalizedTransaction {
@@ -119,7 +140,21 @@ struct TransactionEditorView: View {
 
                 TextField("Merchant", text: $merchantName)
                     .textInputAutocapitalization(.words)
+                    .focused($isMerchantFieldFocused)
                     .accessibilityIdentifier("transactionEditor.merchant")
+
+                if isMerchantFieldFocused {
+                    ForEach(merchantSuggestions, id: \.self) { suggestion in
+                        Button {
+                            merchantName = suggestion
+                            isMerchantFieldFocused = false
+                        } label: {
+                            Label(suggestion, systemImage: "clock.arrow.circlepath")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityIdentifier("transactionEditor.merchantSuggestion")
+                    }
+                }
 
                 TextField("Amount (as shown by the bank)", text: $amountText)
                     .keyboardType(.numbersAndPunctuation)

@@ -3,9 +3,20 @@ import SwiftUI
 
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var ocrReviewStore = OCRTransactionReviewStore()
     @StateObject private var nav = AppNavigationModel()
     @AppStorage("mycost.hasOnboarded") private var hasOnboarded = false
+    @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
+    /// Starts already-locked on a cold launch when App Lock is on, so the
+    /// content never flashes before the lock screen appears.
+    @State private var isLocked: Bool
+
+    init() {
+        let enabled = UserDefaults.standard.bool(forKey: "mycost.appLockEnabled")
+        let uiTesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
+        _isLocked = State(initialValue: enabled && !uiTesting)
+    }
 
     /// UI tests launch straight into the tabs; the intro cover would swallow
     /// their taps.
@@ -80,6 +91,15 @@ struct RootTabView: View {
         }
         .fullScreenCover(isPresented: showOnboarding) {
             OnboardingView()
+        }
+        .fullScreenCover(isPresented: $isLocked) {
+            AppLockView(isLocked: $isLocked)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard appLockEnabled, !isUITesting else { return }
+            if newPhase == .background {
+                isLocked = true
+            }
         }
     }
 
