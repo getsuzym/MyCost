@@ -45,7 +45,7 @@ The project file uses synthetic sequential IDs (`0000...`) and is **not** a file
 
 **No view models for CRUD.** SwiftUI views bind directly to SwiftData `@Model` instances for editing. Reusable logic lives in `Services/` as stateless `struct`/`enum` types that operate on plain arrays and value-type snapshots, so they are unit-testable without a `ModelContainer`.
 
-**Schema is declared twice** — in `MyCostApp.swift` and in the test `setUpWithError`. Both lists (`Transaction`, `Category`, `MerchantRule`, `RecurringPayment`, `Account`) must stay in sync when a model is added. All model relationships use `.nullify`. New `Transaction` fields for amount normalization (`normalizedAmount`, `transactionDirectionRawValue`, `accountTypeRawValue`, `countsAsSpending`, `needsDirectionReview`) are all `= <default>` so they're a lightweight migration on existing stores.
+**Schema is declared twice** — in `MyCostApp.swift` and in the test `setUpWithError`. Both lists (`Transaction`, `Category`, `MerchantRule`, `RecurringPayment`, `Account`, `Budget`) must stay in sync when a model is added. All model relationships use `.nullify`. New `Transaction` fields for amount normalization (`normalizedAmount`, `transactionDirectionRawValue`, `accountTypeRawValue`, `countsAsSpending`, `needsDirectionReview`) are all `= <default>` so they're a lightweight migration on existing stores.
 
 **No AI.** There is no network/LLM categorization. The AI provider connection, Keychain secret store, OpenAI/Anthropic providers, and their settings screen were removed. `MerchantCategorizationCoordinator` is a small synchronous type with three outcomes: `.ruleMatch` (user `MerchantRule`) → `.localMatch` (`LocalMerchantCategorizer` known-merchant table) → `.unresolved` (manual / Uncategorized). Merchant learning stays: renaming/recategorizing a transaction can be saved as a `MerchantRule` (`MerchantRuleService.learnRule`).
 
@@ -154,6 +154,10 @@ It never blindly flips a sign that already matches the account convention. Cues 
 ### Categorization chain — `MerchantCategorizationCoordinator`
 
 Synchronous, offline, three outcomes in strict priority: **1.** user `MerchantRule` → `.ruleMatch`. **2.** `LocalMerchantCategorizer` (offline keyword table; only applies if the mapped category name exists) → `.localMatch`. **3.** `.unresolved` → caller leaves it Uncategorized for manual categorization. No network, no AI. `ReviewTransactionsView`'s per-row "Suggest category" and `TransactionEditorView` use it; nothing is applied without the match being a concrete rule/local hit.
+
+### Budgets — `Budget` + `BudgetService`
+
+`Budget` (`@Model`; `categoryName: String?` — `nil` = overall month, else a category name matched the same way `SpendingAnalytics` groups; `monthlyLimit`). `BudgetService.progress(for:in:)` turns budgets + a `MonthlySpendingSummary` into `[BudgetProgress]` (`limit` / `spent` / `remaining` / `isOver` / `fraction`), overall first then by spend. `upsert(categoryName:monthlyLimit:…)` is one-per-scope; `renameCategory(from:to:in:)` keeps a category budget attached across a rename (wired into `CategoryService.updateCategory`). Managed under **More → Budgets** (`BudgetsView` — month navigator + progress rows + add/edit/delete); the Dashboard shows a "Budget" section (top 4 progress rows, or a "Set a monthly budget" link).
 
 ### Categories — `CategoryService` + `CategoryManagementView`
 

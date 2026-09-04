@@ -109,6 +109,7 @@ struct CategoryService {
         symbolName: String,
         colorHex: String,
         in categories: [Category],
+        budgets: [Budget] = [],
         modelContext: ModelContext
     ) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,9 +117,15 @@ struct CategoryService {
         guard isNameAvailable(trimmed, in: categories, excluding: category) else {
             throw CategoryError.duplicateName(trimmed)
         }
+        let oldName = category.name
         category.name = trimmed
         category.symbolName = symbolName.trimmingCharacters(in: .whitespacesAndNewlines)
         category.colorHex = colorHex
+        // `Transaction.category` follows automatically (relationship); `Budget`
+        // matches by name, so it needs the rename applied explicitly.
+        if oldName != trimmed {
+            BudgetService().renameCategory(from: oldName, to: trimmed, in: budgets)
+        }
         try modelContext.save()
     }
 

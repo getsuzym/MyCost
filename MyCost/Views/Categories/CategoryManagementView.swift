@@ -251,6 +251,7 @@ private struct CategoryEditorView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query private var budgets: [Budget]
 
     @State private var name = ""
     @State private var symbolName = "tag"
@@ -345,6 +346,7 @@ private struct CategoryEditorView: View {
                     symbolName: symbolName,
                     colorHex: colorHex,
                     in: existingCategories,
+                    budgets: budgets,
                     modelContext: modelContext
                 )
             } else {

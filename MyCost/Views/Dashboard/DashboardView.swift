@@ -9,6 +9,7 @@ struct DashboardView: View {
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @Query private var budgets: [Budget]
 
     /// Which month the dashboard is showing. Starts at the current month; the
     /// user can step back to see an imported historical statement.
@@ -50,12 +51,30 @@ struct DashboardView: View {
         // and the ForEach over them needs a single, stable set to diff against.
         let summary = summary
         let months = monthsWithTransactions
+        let budgetRows = BudgetService().progress(for: budgets, in: summary)
         return List {
             Section {
                 heroCard(summary: summary)
                     .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 6, trailing: 16))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
+            }
+
+            Section {
+                if budgetRows.isEmpty {
+                    NavigationLink { BudgetsView() } label: {
+                        Label("Set a monthly budget", systemImage: "chart.bar.doc.horizontal")
+                            .font(.callout)
+                    }
+                    .accessibilityIdentifier("dashboard.addBudget")
+                } else {
+                    ForEach(budgetRows.prefix(4)) { row in
+                        NavigationLink { BudgetsView() } label: { BudgetProgressRow(progress: row) }
+                            .accessibilityIdentifier("dashboard.budgetRow")
+                    }
+                }
+            } header: {
+                Text("Budget")
             }
 
             Section("This Month") {

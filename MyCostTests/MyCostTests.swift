@@ -14,7 +14,8 @@ final class MyCostTests: XCTestCase {
             Category.self,
             MerchantRule.self,
             RecurringPayment.self,
-            Account.self
+            Account.self,
+            Budget.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         container = try ModelContainer(for: schema, configurations: [configuration])
@@ -3132,7 +3133,7 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Uncategorized" }?.amount, 965) // 1000 - 35
     }
 
-    func testDebitBatchImportCountsEverythingWithDepositsFlagged() throws {
+    func testDebitBatchImportCountsPurchasesAndPreTagsDepositsAsIncome() throws {
         let drafts = [
             draft(merchant: "GROCERY RUN", amount: -60, on: date(2026, 8, 4)),
             draft(merchant: "PAYROLL DEPOSIT", amount: 2200, on: date(2026, 8, 1))
@@ -3144,10 +3145,12 @@ final class MyCostTests: XCTestCase {
         XCTAssertNil(outcome.saveError)
 
         let history = try historyTransactions()
-        XCTAssertEqual(SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history).total, 2260)
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 15), transactions: history)
+        XCTAssertEqual(summary.total, 60)          // the deposit is income, not spending
+        XCTAssertEqual(summary.incomeTotal, 2200)
         let deposit = try XCTUnwrap(history.first { $0.merchantName == "PAYROLL DEPOSIT" })
-        XCTAssertTrue(deposit.countsAsSpending)
-        XCTAssertTrue(deposit.needsDirectionReview) // flagged so the user can un-count it
+        XCTAssertTrue(deposit.isIncome)
+        XCTAssertFalse(deposit.contributesToSpending)
     }
 
     // MARK: - Everything counts unless the user removes it
@@ -3216,6 +3219,59 @@ final class MyCostTests: XCTestCase {
         XCTAssertFalse(payroll.contributesToSpending)
         XCTAssertEqual(payroll.spendingAmount, 0)
         XCTAssertEqual(try summaryFor(date(2026, 8, 15)).total, 0)
+    }
+
+    // MARK: - Budgets
+
+    func testBudgetProgressMeasuresSpendPerScope() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let groceries = makeCategory("Groceries", sortOrder: 1)
+        insertTransaction("Bistro", amount: 220, on: date(2026, 8, 3), category: dining)
+        insertTransaction("Market", amount: 90, on: date(2026, 8, 5), category: groceries)
+        try context.save()
+
+        let overall = Budget(categoryName: nil, monthlyLimit: 400)
+        let diningBudget = Budget(categoryName: "Dining", monthlyLimit: 150)
+        [overall, diningBudget].forEach(context.insert)
+        try context.save()
+
+        let summary = try summaryFor(date(2026, 8, 15))
+        let rows = BudgetService().progress(for: [diningBudget, overall], in: summary)
+
+        XCTAssertEqual(rows.map(\.name), ["Overall", "Dining"])   // overall first
+        let overallRow = try XCTUnwrap(rows.first { $0.name == "Overall" })
+        XCTAssertEqual(overallRow.spent, 310)                     // 220 + 90
+        XCTAssertEqual(overallRow.remaining, 90)
+        XCTAssertFalse(overallRow.isOver)
+
+        let diningRow = try XCTUnwrap(rows.first { $0.name == "Dining" })
+        XCTAssertEqual(diningRow.spent, 220)
+        XCTAssertTrue(diningRow.isOver)
+        XCTAssertEqual(diningRow.remaining, -70)
+    }
+
+    func testBudgetUpsertCreatesThenUpdatesInPlace() throws {
+        let service = BudgetService()
+        var budgets = try context.fetch(FetchDescriptor<Budget>())
+        service.upsert(categoryName: "Dining", monthlyLimit: 200, in: budgets, modelContext: context)
+        try context.save()
+
+        budgets = try context.fetch(FetchDescriptor<Budget>())
+        XCTAssertEqual(budgets.count, 1)
+
+        service.upsert(categoryName: "Dining", monthlyLimit: 250, in: budgets, modelContext: context)
+        try context.save()
+        budgets = try context.fetch(FetchDescriptor<Budget>())
+        XCTAssertEqual(budgets.count, 1)
+        XCTAssertEqual(budgets.first?.monthlyLimit, 250)
+    }
+
+    func testBudgetRenameCategoryFollowsTheRename() throws {
+        let budget = Budget(categoryName: "Dining", monthlyLimit: 150)
+        context.insert(budget)
+        try context.save()
+        BudgetService().renameCategory(from: "Dining", to: "Eating Out", in: [budget])
+        XCTAssertEqual(budget.categoryName, "Eating Out")
     }
 
     // MARK: - Category drill-down
