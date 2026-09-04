@@ -207,9 +207,17 @@ struct RecurringPaymentSuggestionService {
         graceDays: Int = 2,
         lookbackDays: Int = 31
     ) -> RecurringAttention {
-        let windowStart = calendar.date(byAdding: .day, value: -lookbackDays, to: now) ?? now
-        let windowEnd = calendar.date(byAdding: .day, value: soonDays, to: now) ?? now
-        let missedCutoff = calendar.date(byAdding: .day, value: -graceDays, to: now) ?? now
+        // Occurrence dates are calendar-day anchored (midnight). Comparing
+        // them against a precise `now` timestamp made a same-day occurrence
+        // vanish from both "due" and "missed" the moment any time had passed
+        // since midnight — e.g. a biweekly payment due today, checked at
+        // 11am, is neither `>= now` (today's midnight is earlier) nor old
+        // enough to be "missed". Every comparison here works in whole
+        // calendar days instead, off `today`.
+        let today = calendar.startOfDay(for: now)
+        let windowStart = calendar.date(byAdding: .day, value: -lookbackDays, to: today) ?? today
+        let windowEnd = calendar.date(byAdding: .day, value: soonDays, to: today) ?? today
+        let missedCutoff = calendar.date(byAdding: .day, value: -graceDays, to: today) ?? today
 
         var due: [RecurringAttention.Item] = []
         var missed: [RecurringAttention.Item] = []
@@ -242,7 +250,7 @@ struct RecurringPaymentSuggestionService {
                                                    amount: series.expectedAmount, date: date)
                 if date < missedCutoff, date >= missedFloor {
                     missed.append(item)
-                } else if date >= now {
+                } else if date >= today {
                     due.append(item)
                 }
             }

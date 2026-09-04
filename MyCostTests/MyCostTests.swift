@@ -952,6 +952,25 @@ final class MyCostTests: XCTestCase {
         XCTAssertFalse(attention.isEmpty)
     }
 
+    /// Regression: occurrence dates are calendar-day (midnight) anchored, but
+    /// `now` rarely is — checking mid-afternoon must still surface a payment
+    /// due *today*, not silently drop it because today's midnight is earlier
+    /// than the current clock time.
+    func testAttentionShowsAPaymentDueLaterTodayEvenWhenCheckedInTheAfternoon() {
+        let service = RecurringPaymentSuggestionService()
+        let today = date(2026, 9, 4)
+        let checkedAt = Calendar.current.date(byAdding: .hour, value: 11, to: today)! // 11am today
+
+        let mortgage = RecurringPayment(
+            accountName: "Default", merchantName: "Mortgage payment", expectedAmount: 1755.34,
+            frequency: .biweekly, nextExpectedDate: today
+        )
+
+        let attention = service.attention(activeSeries: [mortgage], recurringTransactions: [], now: checkedAt)
+        XCTAssertEqual(attention.dueSoon.map(\.merchantName), ["Mortgage payment"])
+        XCTAssertTrue(attention.missed.isEmpty)
+    }
+
     func testAttentionIsEmptyWhenEverythingRecentIsPaidOrFarOff() {
         let service = RecurringPaymentSuggestionService()
         let now = date(2026, 9, 15)
