@@ -206,6 +206,11 @@ final class Transaction {
     /// Free-form labels, orthogonal to `category`. Many-to-many; `Tag` owns the
     /// inverse. Defaulted so it's a lightweight migration on existing stores.
     @Relationship(deleteRule: .nullify) var tags: [Tag] = []
+    /// Portions of this transaction's spend attributed to different categories.
+    /// Owned by the transaction (`.cascade`) — deleting the transaction deletes
+    /// its splits. Empty for an ordinary, unsplit transaction.
+    @Relationship(deleteRule: .cascade, inverse: \TransactionSplit.transaction)
+    var splits: [TransactionSplit] = []
 
     init(
         id: UUID = UUID(),
@@ -296,6 +301,12 @@ final class Transaction {
         if transactionDirection == .unknown { return abs(amount) }
         return abs(normalizedAmount == 0 ? amount : normalizedAmount)
     }
+
+    /// Whether this transaction's spend is divided across categories.
+    var isSplit: Bool { !splits.isEmpty }
+
+    /// Sum of the splits' amounts. Meaningless (0) when not split.
+    var splitTotal: Decimal { splits.reduce(Decimal.zero) { $0 + $1.amount } }
 
     /// Applies a `TransactionNormalizer` result to the stored fields.
     func applyNormalization(_ normalized: NormalizedTransaction, accountType: AccountType) {

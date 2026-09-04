@@ -19,6 +19,7 @@ struct CategoryDetailView: View {
     @State private var transactionPendingDeletion: Transaction?
 
     private let monthly = MonthlyTransactionsService()
+    private let analytics = SpendingAnalytics()
 
     init(categoryName: String, month: Date) {
         self.categoryName = categoryName
@@ -29,19 +30,17 @@ struct CategoryDetailView: View {
         Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
     }
 
-    private var monthTransactions: [Transaction] {
-        let interval = monthly.monthInterval(containing: monthAnchor)
-        return allTransactions.filter { transaction in
-            transaction.transactionDate >= interval.start &&
-            transaction.transactionDate < interval.end &&
-            (transaction.category?.name ?? Category.fallbackName) == categoryName
-        }
+    /// One row per whole non-split transaction in this category, or per
+    /// matching split of a split one — so a $120 charge split $80/$40 across
+    /// two categories shows its $80 portion here, not the full $120.
+    private var lineItems: [CategoryLineItem] {
+        analytics.categoryLineItems(categoryName: categoryName, inMonthContaining: monthAnchor, transactions: allTransactions)
     }
 
     private var categoryTotal: Decimal {
-        monthTransactions
-            .filter { !$0.isExcluded }
-            .reduce(Decimal.zero) { $0 + $1.spendingAmount }
+        lineItems
+            .filter { !$0.transaction.isExcluded }
+            .reduce(Decimal.zero) { $0 + $1.amount }
     }
 
     /// This category's share of the month's eligible spending — the same number
@@ -58,7 +57,7 @@ struct CategoryDetailView: View {
     }
 
     var body: some View {
-        let rows = monthTransactions
+        let rows = lineItems
         return List {
             Section {
                 VStack(alignment: .leading, spacing: 14) {
@@ -105,20 +104,20 @@ struct CategoryDetailView: View {
                     Text("No \(categoryName) transactions in \(Formatters.month.string(from: monthAnchor)).")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(rows) { transaction in
+                ForEach(rows) { item in
                     NavigationLink {
-                        TransactionDetailView(transaction: transaction)
+                        TransactionDetailView(transaction: item.transaction)
                     } label: {
-                        CategoryTransactionRow(transaction: transaction)
+                        CategoryTransactionRow(item: item)
                     }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
-                            transactionPendingDeletion = transaction
+                            transactionPendingDeletion = item.transaction
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
                         Button {
-                            editingTransaction = transaction
+                            editingTransaction = item.transaction
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -193,21 +192,24 @@ struct CategoryDetailView: View {
 }
 
 private struct CategoryTransactionRow: View {
-    let transaction: Transaction
+    let item: CategoryLineItem
+
+    private var transaction: Transaction { item.transaction }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(transaction.merchantName).font(.body).lineLimit(1)
                 Spacer()
-                Text(Formatters.currencyString(for: transaction.amount))
+                Text(Formatters.currencyString(for: item.isPartial ? item.amount : transaction.amount))
                     .font(.body.monospacedDigit())
-                    .foregroundStyle(transaction.amount < 0 ? .green : .primary)
+                    .foregroundStyle(item.amount < 0 ? .green : .primary)
             }
             HStack(spacing: 6) {
                 Text(Formatters.shortDate.string(from: transaction.transactionDate))
                 Text("·")
                 Text(transaction.accountName)
+                if item.isPartial { badge("Split", .purple) }
                 if transaction.isRecurring { badge("Recurring", .blue) }
                 if transaction.isExcluded { badge("Excluded", .secondary) }
                 if !transaction.countsAsSpending { badge("Not spending", .secondary) }

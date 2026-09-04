@@ -58,6 +58,7 @@
 		0000000000000000000009C0 /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009C1 /* Tag.swift */; };
 		0000000000000000000009C2 /* TagService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009C3 /* TagService.swift */; };
 		0000000000000000000009C4 /* TagManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009C5 /* TagManagementView.swift */; };
+		0000000000000000000009C6 /* TransactionSplit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009C7 /* TransactionSplit.swift */; };
 		000000000000000000000917 /* DataPortabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000918 /* DataPortabilityService.swift */; };
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
@@ -135,6 +136,7 @@
 		0000000000000000000009C1 /* Tag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tag.swift; sourceTree = "<group>"; };
 		0000000000000000000009C3 /* TagService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagService.swift; sourceTree = "<group>"; };
 		0000000000000000000009C5 /* TagManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tags/TagManagementView.swift; sourceTree = "<group>"; };
+		0000000000000000000009C7 /* TransactionSplit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionSplit.swift; sourceTree = "<group>"; };
 		000000000000000000000918 /* DataPortabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataPortabilityService.swift; sourceTree = "<group>"; };
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
@@ -244,6 +246,7 @@
 				000000000000000000000033 /* Account.swift */,
 				000000000000000000000912 /* Budget.swift */,
 				0000000000000000000009C1 /* Tag.swift */,
+				0000000000000000000009C7 /* TransactionSplit.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -544,6 +547,7 @@
 				000000000000000000000132 /* Account.swift in Sources */,
 				000000000000000000000911 /* Budget.swift in Sources */,
 				0000000000000000000009C0 /* Tag.swift in Sources */,
+				0000000000000000000009C6 /* TransactionSplit.swift in Sources */,
 				0000000000000000000009C2 /* TagService.swift in Sources */,
 				0000000000000000000009C4 /* TagManagementView.swift in Sources */,
 				000000000000000000000133 /* AccountService.swift in Sources */,

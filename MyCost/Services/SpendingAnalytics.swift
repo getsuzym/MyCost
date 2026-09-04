@@ -43,8 +43,41 @@ struct MonthSpend: Identifiable, Equatable {
     }
 }
 
+/// One line of spend attributed to a category for a category drill-down list —
+/// a whole non-split transaction, or one `TransactionSplit` of a split one.
+struct CategoryLineItem: Identifiable {
+    let id: UUID
+    let transaction: Transaction
+    /// The amount attributed to this category: `transaction.spendingAmount`
+    /// when not split, else this one split's `amount`.
+    let amount: Decimal
+    let isPartial: Bool
+}
+
 struct SpendingAnalytics {
     private let recurringSuggestionService = RecurringPaymentSuggestionService()
+
+    /// Every line of spend attributed to `categoryName` in the month containing
+    /// `month`, newest first — split transactions contribute one line per
+    /// matching split rather than their whole amount. Includes excluded rows
+    /// (callers filter those out of totals, same as before splits existed) so a
+    /// category drill-down list still shows everything that happened.
+    func categoryLineItems(categoryName: String, inMonthContaining month: Date, transactions: [Transaction]) -> [CategoryLineItem] {
+        guard let interval = Calendar.current.dateInterval(of: .month, for: month) else { return [] }
+        let inMonth = transactions.filter { $0.transactionDate >= interval.start && $0.transactionDate < interval.end }
+
+        var items: [CategoryLineItem] = []
+        for transaction in inMonth {
+            if transaction.isSplit {
+                for split in transaction.splits where (split.category?.name ?? Category.fallbackName) == categoryName {
+                    items.append(CategoryLineItem(id: split.id, transaction: transaction, amount: split.amount, isPartial: true))
+                }
+            } else if (transaction.category?.name ?? Category.fallbackName) == categoryName {
+                items.append(CategoryLineItem(id: transaction.id, transaction: transaction, amount: transaction.spendingAmount, isPartial: false))
+            }
+        }
+        return items.sorted { $0.transaction.transactionDate > $1.transaction.transactionDate }
+    }
 
     /// The last `count` calendar months (oldest first), each with its spend and
     /// income total, ending with the month containing `endingAt`.
@@ -125,17 +158,29 @@ struct SpendingAnalytics {
         // same `total` (non-excluded, counts-as-spending, normalized). Refunds
         // reduce it exactly as they reduce a category. `0` when there's nothing.
         let eligibleTotal = NSDecimalNumber(decimal: total).doubleValue
-        let categoryTotals = Dictionary(grouping: includedTransactions) { transaction in
-            transaction.category?.name ?? "Uncategorized"
+        // A split transaction's spend is attributed to each split's category
+        // rather than the transaction's own `category` — the amounts still sum
+        // to `total` since the editor enforces splits == spendingAmount.
+        var amountsByCategory: [String: Decimal] = [:]
+        for transaction in includedTransactions {
+            if transaction.isSplit {
+                for split in transaction.splits {
+                    let name = split.category?.name ?? "Uncategorized"
+                    amountsByCategory[name, default: 0] += split.amount
+                }
+            } else {
+                let name = transaction.category?.name ?? "Uncategorized"
+                amountsByCategory[name, default: 0] += transaction.spendingAmount
+            }
         }
-        .map { categoryName, transactions in
-            let amount = transactions.reduce(Decimal.zero) { $0 + $1.spendingAmount }
-            let percentage = eligibleTotal == 0
-                ? 0
-                : (NSDecimalNumber(decimal: amount).doubleValue / eligibleTotal) * 100
-            return CategorySpend(categoryName: categoryName, amount: amount, percentageOfTotal: percentage)
-        }
-        .sorted { $0.amount > $1.amount }
+        let categoryTotals = amountsByCategory
+            .map { categoryName, amount -> CategorySpend in
+                let percentage = eligibleTotal == 0
+                    ? 0
+                    : (NSDecimalNumber(decimal: amount).doubleValue / eligibleTotal) * 100
+                return CategorySpend(categoryName: categoryName, amount: amount, percentageOfTotal: percentage)
+            }
+            .sorted { $0.amount > $1.amount }
 
         return MonthlySpendingSummary(
             month: month,

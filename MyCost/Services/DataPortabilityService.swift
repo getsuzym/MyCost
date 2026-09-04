@@ -87,7 +87,12 @@ struct DataPortabilityService {
         var categoryID: UUID?; var recurringPaymentID: UUID?
         /// Optional, not defaulted — see the comment on `Backup.tags`.
         var tagIDs: [UUID]?
+        /// Splits are owned by their transaction, so they're embedded here
+        /// rather than a separate top-level array. Optional for the same
+        /// pre-tags/pre-splits backward-compatibility reason.
+        var splits: [TransactionSplitDTO]?
     }
+    struct TransactionSplitDTO: Codable { var id: UUID; var amount: Decimal; var note: String; var categoryID: UUID? }
 
     func makeBackup(
         transactions: [Transaction], categories: [Category], accounts: [Account],
@@ -125,7 +130,8 @@ struct DataPortabilityService {
                           accountTypeRawValue: $0.accountTypeRawValue, countsAsSpending: $0.countsAsSpending,
                           needsDirectionReview: $0.needsDirectionReview, spendingCountOverridden: $0.spendingCountOverridden,
                           categoryID: $0.category?.id, recurringPaymentID: $0.recurringPayment?.id,
-                          tagIDs: $0.tags.map(\.id))
+                          tagIDs: $0.tags.map(\.id),
+                          splits: $0.splits.map { TransactionSplitDTO(id: $0.id, amount: $0.amount, note: $0.note, categoryID: $0.category?.id) })
         }
         return backup
     }
@@ -156,6 +162,7 @@ struct DataPortabilityService {
         try modelContext.delete(model: Account.self)
         try modelContext.delete(model: Category.self)
         try modelContext.delete(model: Tag.self)
+        try modelContext.delete(model: TransactionSplit.self)
 
         var categoriesByID: [UUID: Category] = [:]
         for dto in backup.categories {
@@ -219,6 +226,13 @@ struct DataPortabilityService {
             modelContext.insert(transaction)
             let dtoTags = (dto.tagIDs ?? []).compactMap { tagsByID[$0] }
             if !dtoTags.isEmpty { transaction.tags = dtoTags }
+            for splitDTO in dto.splits ?? [] {
+                let split = TransactionSplit(
+                    id: splitDTO.id, amount: splitDTO.amount, note: splitDTO.note,
+                    category: splitDTO.categoryID.flatMap { categoriesByID[$0] }, transaction: transaction
+                )
+                modelContext.insert(split)
+            }
         }
 
         try modelContext.save()

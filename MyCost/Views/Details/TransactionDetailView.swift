@@ -42,6 +42,14 @@ struct TransactionDetailView: View {
                 }
             }
 
+            if transaction.isSplit {
+                Section("Split") {
+                    ForEach(transaction.splits.sorted { $0.amount > $1.amount }) { split in
+                        LabeledContent(split.category?.name ?? "Uncategorized", value: Formatters.currencyString(for: split.amount))
+                    }
+                }
+            }
+
             if !transaction.note.isEmpty {
                 Section("Note") {
                     Text(transaction.note)

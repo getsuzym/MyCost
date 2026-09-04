@@ -44,6 +44,9 @@ struct TransactionEditorView: View {
     @State private var note = ""
     @State private var selectedTagIDs: Set<UUID> = []
     @State private var newTagName = ""
+    /// Split editing — edit mode only (see `SplitRowDraft`).
+    @State private var isSplitting = false
+    @State private var splitRows: [SplitRowDraft] = []
     @State private var countsAsSpending = true
     /// Suppresses the "sign is unusual" hint for an existing row.
     @State private var directionIsUserSet = false
@@ -61,6 +64,18 @@ struct TransactionEditorView: View {
     private let tagService = TagService()
     private let accountService = AccountService()
     private let normalizer = TransactionNormalizer()
+
+    /// The amount a transaction's splits must sum to — the magnitude the user
+    /// typed, independent of sign/normalization.
+    private var splitTargetAmount: Decimal {
+        abs(Decimal(string: amountText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+    }
+
+    private var splitRowsSum: Decimal {
+        splitRows.reduce(Decimal.zero) { $0 + (Decimal(string: $1.amountText.trimmingCharacters(in: .whitespaces)) ?? 0) }
+    }
+
+    private var splitRemaining: Decimal { splitTargetAmount - splitRowsSum }
 
     /// Live account-type-aware interpretation of the entered amount.
     private var normalization: NormalizedTransaction {
@@ -189,6 +204,62 @@ struct TransactionEditorView: View {
                 Text("Tags")
             } footer: {
                 Text("Free-form labels, separate from the category. A transaction can have any number.")
+            }
+
+            if case .edit = mode {
+                Section {
+                    Toggle("Split into categories", isOn: $isSplitting)
+                        .accessibilityIdentifier("transactionEditor.isSplitting")
+                        .onChange(of: isSplitting) { _, newValue in
+                            if newValue, splitRows.isEmpty {
+                                splitRows = [SplitRowDraft(id: UUID(), categoryID: selectedCategoryID, amountText: "")]
+                            }
+                        }
+
+                    if isSplitting {
+                        ForEach($splitRows) { $row in
+                            HStack {
+                                Picker("Category", selection: $row.categoryID) {
+                                    Text("Uncategorized").tag(UUID?.none)
+                                    ForEach(visibleCategories.alphabetizedByName()) { category in
+                                        Text(category.name).tag(Optional(category.id))
+                                    }
+                                }
+                                .labelsHidden()
+                                TextField("Amount", text: $row.amountText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 70)
+                                    .accessibilityIdentifier("transactionEditor.splitAmount")
+                                Button {
+                                    splitRows.removeAll { $0.id == row.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Button {
+                            splitRows.append(SplitRowDraft(id: UUID(), categoryID: nil, amountText: ""))
+                        } label: {
+                            Label("Add Split", systemImage: "plus.circle")
+                        }
+                        .accessibilityIdentifier("transactionEditor.addSplit")
+
+                        HStack {
+                            Text(splitRemaining == 0 ? "Fully allocated" : (splitRemaining > 0 ? "Remaining" : "Over by"))
+                            Spacer()
+                            Text(Formatters.currencyString(for: abs(splitRemaining)))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(splitRemaining == 0 ? Theme.positive : .orange)
+                    }
+                } header: {
+                    Text("Split")
+                } footer: {
+                    Text("Divide this transaction's amount across categories for accurate category totals \u{2014} e.g. a Costco charge split between Groceries and Household. Splits must add up to the full amount.")
+                }
             }
 
             Section {
@@ -415,6 +486,53 @@ struct TransactionEditorView: View {
         tagService.setTags(selectedTagIDs, on: transaction, allTags: Array(byID.values))
     }
 
+    private func validateSplits() -> Bool {
+        guard isSplitting else { return true }
+        guard !splitRows.isEmpty else {
+            validationMessage = "Add at least one split, or turn off splitting."
+            return false
+        }
+        for row in splitRows {
+            guard let amount = Decimal(string: row.amountText.trimmingCharacters(in: .whitespaces)), amount > 0 else {
+                validationMessage = "Enter a valid amount for each split."
+                return false
+            }
+        }
+        guard splitRemaining == 0 else {
+            validationMessage = splitRemaining > 0
+                ? "Splits are short by \(Formatters.currencyString(for: splitRemaining)). They must add up to the full amount."
+                : "Splits are over by \(Formatters.currencyString(for: abs(splitRemaining))). They must add up to the full amount."
+            return false
+        }
+        return true
+    }
+
+    /// Reconciles `transaction.splits` to `splitRows` (edit mode only —
+    /// `isSplitting` can never be true in add mode, since the section is hidden
+    /// there, so this safely no-ops / clears for a plain add).
+    private func applySplits(to transaction: Transaction) {
+        guard isSplitting else {
+            for split in transaction.splits { modelContext.delete(split) }
+            return
+        }
+        let keepIDs = Set(splitRows.map(\.id))
+        for split in transaction.splits where !keepIDs.contains(split.id) {
+            modelContext.delete(split)
+        }
+        let existingByID = Dictionary(uniqueKeysWithValues: transaction.splits.map { ($0.id, $0) })
+        for row in splitRows {
+            let amount = Decimal(string: row.amountText.trimmingCharacters(in: .whitespaces)) ?? 0
+            let category = categories.first { $0.id == row.categoryID }
+            if let existing = existingByID[row.id] {
+                existing.amount = amount
+                existing.category = category
+            } else {
+                let split = TransactionSplit(id: row.id, amount: amount, category: category, transaction: transaction)
+                modelContext.insert(split)
+            }
+        }
+    }
+
     private func loadInitialValues() {
         guard case .edit(let transaction) = mode else {
             if let initialDate { transactionDate = initialDate }
@@ -449,6 +567,10 @@ struct TransactionEditorView: View {
         }()
         note = transaction.note
         selectedTagIDs = Set(transaction.tags.map(\.id))
+        isSplitting = transaction.isSplit
+        splitRows = transaction.splits.map {
+            SplitRowDraft(id: $0.id, categoryID: $0.category?.id, amountText: NSDecimalNumber(decimal: $0.amount).stringValue)
+        }
         countsAsSpending = transaction.countsAsSpending
         // Treat an existing row's stored choice as user-set so we don't nag.
         directionIsUserSet = true
@@ -485,6 +607,8 @@ struct TransactionEditorView: View {
             validationMessage = "Enter a valid amount."
             return
         }
+
+        guard validateSplits() else { return }
 
         let selectedCategory = categories.first { $0.id == selectedCategoryID }
 
@@ -557,6 +681,7 @@ struct TransactionEditorView: View {
             transaction.note = note
             transaction.updatedAt = .now
             applyTags(to: transaction)
+            applySplits(to: transaction)
             applyDirection(to: transaction)
             updateRecurringPayment(
                 for: transaction,
@@ -770,6 +895,15 @@ struct TransactionEditorView: View {
         }
     }
 
+}
+
+/// One editable split row (edit mode only). `id` matches an existing
+/// `TransactionSplit.id` when loaded from a saved split, or is fresh for a row
+/// the user just added — either way it's what `applySplits` reconciles on.
+private struct SplitRowDraft: Identifiable {
+    let id: UUID
+    var categoryID: UUID?
+    var amountText: String
 }
 
 private struct ManualTransactionDraft {

@@ -40,8 +40,9 @@ struct CategoryReferenceCounts: Equatable {
     var transactions: Int
     var merchantRules: Int
     var recurringPayments: Int
+    var transactionSplits: Int = 0
 
-    var total: Int { transactions + merchantRules + recurringPayments }
+    var total: Int { transactions + merchantRules + recurringPayments + transactionSplits }
     var isInUse: Bool { total > 0 }
 }
 
@@ -72,7 +73,8 @@ struct CategoryService {
         CategoryReferenceCounts(
             transactions: transactions.filter { $0.category?.id == category.id }.count,
             merchantRules: merchantRules.filter { $0.category?.id == category.id }.count,
-            recurringPayments: recurringPayments.filter { $0.category?.id == category.id }.count
+            recurringPayments: recurringPayments.filter { $0.category?.id == category.id }.count,
+            transactionSplits: transactions.flatMap(\.splits).filter { $0.category?.id == category.id }.count
         )
     }
 
@@ -162,6 +164,9 @@ struct CategoryService {
         for transaction in transactions where transaction.category?.id == category.id {
             transaction.category = target
             transaction.updatedAt = .now
+        }
+        for split in transactions.flatMap(\.splits) where split.category?.id == category.id {
+            split.category = target
         }
         for rule in merchantRules where rule.category?.id == category.id {
             rule.category = target

@@ -16,7 +16,8 @@ final class MyCostTests: XCTestCase {
             RecurringPayment.self,
             Account.self,
             Budget.self,
-            Tag.self
+            Tag.self,
+            TransactionSplit.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         container = try ModelContainer(for: schema, configurations: [configuration])
@@ -3515,6 +3516,126 @@ final class MyCostTests: XCTestCase {
         let lines = csv.components(separatedBy: "\r\n")
         XCTAssertTrue(lines[0].contains("Tags"))
         XCTAssertTrue(lines[1].contains("Split"))
+    }
+
+    // MARK: - Split transactions
+
+    private func addSplit(_ amount: Decimal, category: MyCost.Category?, to transaction: Transaction) {
+        let split = TransactionSplit(amount: amount, category: category, transaction: transaction)
+        context.insert(split)
+    }
+
+    func testSplitTransactionAttributesSpendToEachSplitsCategoryInDashboardTotals() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let household = makeCategory("Household", sortOrder: 1)
+        let costco = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3), category: groceries)
+        addSplit(80, category: groceries, to: costco)
+        addSplit(40, category: household, to: costco)
+        try context.save()
+
+        let summary = SpendingAnalytics().monthlySummary(for: date(2026, 8, 1), transactions: try allTransactions())
+        XCTAssertEqual(summary.total, 120)
+        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Groceries" }?.amount, 80)
+        XCTAssertEqual(summary.categoryTotals.first { $0.categoryName == "Household" }?.amount, 40)
+    }
+
+    func testCategoryLineItemsShowSplitPortionNotFullAmount() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let household = makeCategory("Household", sortOrder: 1)
+        let costco = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3), category: groceries)
+        addSplit(80, category: groceries, to: costco)
+        addSplit(40, category: household, to: costco)
+        _ = insertTransaction("Metro", amount: 30, on: date(2026, 8, 5), category: groceries) // unsplit
+        try context.save()
+
+        let items = SpendingAnalytics().categoryLineItems(categoryName: "Groceries", inMonthContaining: date(2026, 8, 1), transactions: try allTransactions())
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(Set(items.map(\.amount)), [80, 30])
+        XCTAssertTrue(items.contains { $0.amount == 80 && $0.isPartial })
+        XCTAssertTrue(items.contains { $0.amount == 30 && !$0.isPartial })
+    }
+
+    func testDeletingTransactionCascadesItsSplits() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let costco = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3), category: groceries)
+        addSplit(80, category: groceries, to: costco)
+        addSplit(40, category: nil, to: costco)
+        try context.save()
+        XCTAssertEqual(try context.fetch(FetchDescriptor<TransactionSplit>()).count, 2)
+
+        context.delete(costco)
+        try context.save()
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<TransactionSplit>()).count, 0)
+    }
+
+    func testDeletingCategoryReassignsSplitsToo() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let other = makeCategory("Household", sortOrder: 1)
+        let costco = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3))
+        addSplit(80, category: groceries, to: costco)
+        addSplit(40, category: other, to: costco)
+        try context.save()
+
+        try CategoryService().deleteCategory(
+            groceries, reassigningTo: other,
+            transactions: try allTransactions(), merchantRules: [], recurringPayments: [],
+            modelContext: context
+        )
+
+        let splits = try context.fetch(FetchDescriptor<TransactionSplit>())
+        XCTAssertEqual(Set(splits.map { $0.category?.name }), ["Household"])
+    }
+
+    func testBackupRoundTripsSplitsAndRestoreRelinksThem() throws {
+        let groceries = makeCategory("Groceries", sortOrder: 0)
+        let household = makeCategory("Household", sortOrder: 1)
+        let costco = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3), category: groceries)
+        addSplit(80, category: groceries, to: costco)
+        addSplit(40, category: household, to: costco)
+        try context.save()
+
+        let portability = DataPortabilityService()
+        let backup = portability.makeBackup(
+            transactions: try allTransactions(),
+            categories: try context.fetch(FetchDescriptor<MyCost.Category>()),
+            accounts: [], merchantRules: [], recurringPayments: [], budgets: []
+        )
+        let decoded = try portability.decode(try portability.encode(backup))
+        XCTAssertEqual(decoded.transactions.first?.splits?.count, 2)
+
+        let freshContainer = try ModelContainer(
+            for: Schema([Transaction.self, MyCost.Category.self, MerchantRule.self,
+                         RecurringPayment.self, Account.self, Budget.self, Tag.self, TransactionSplit.self]),
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let freshContext = ModelContext(freshContainer)
+        try portability.restore(decoded, into: freshContext)
+
+        let restoredTransaction = try XCTUnwrap(try freshContext.fetch(FetchDescriptor<Transaction>()).first)
+        XCTAssertEqual(restoredTransaction.splits.count, 2)
+        XCTAssertEqual(Set(restoredTransaction.splits.map { $0.category?.name }), ["Groceries", "Household"])
+    }
+
+    func testPreSplitBackupJSONStillDecodes() throws {
+        let json = """
+        {
+          "version": 1, "exportedAt": "2026-01-01T00:00:00Z",
+          "categories": [], "accounts": [], "merchantRules": [], "recurringPayments": [], "budgets": [],
+          "transactions": [
+            {
+              "id": "\(UUID().uuidString)", "accountName": "Default", "merchantName": "Old",
+              "originalDescription": "Old", "amount": 10, "transactionDate": "2026-01-01T00:00:00Z",
+              "statusRawValue": "posted", "isExcluded": false, "excludedReason": "",
+              "isRecurring": false, "isIncome": false, "duplicateStateRawValue": "unique", "note": "",
+              "normalizedAmount": 10, "transactionDirectionRawValue": "debit", "accountTypeRawValue": "other",
+              "countsAsSpending": true, "needsDirectionReview": false, "spendingCountOverridden": false
+            }
+          ]
+        }
+        """
+        let decoded = try DataPortabilityService().decode(Data(json.utf8))
+        XCTAssertNil(decoded.transactions.first?.splits)
     }
 
     // MARK: - Category drill-down
