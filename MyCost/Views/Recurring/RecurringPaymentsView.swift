@@ -12,10 +12,21 @@ struct RecurringPaymentsView: View {
     @State private var paymentPendingDeletion: RecurringPayment?
     @State private var selectedSuggestion: RecurringPaymentSuggestion?
     @State private var monthAnchor = Date()
+    /// 0 = reminders off; otherwise a local notification this many days before
+    /// each active series' next expected date.
+    @AppStorage("recurring.reminderLeadDays") private var reminderLeadDays = 0
 
     private let suggestionService = RecurringPaymentSuggestionService()
     private let recurringPaymentService = RecurringPaymentService()
+    private let reminderService = RecurringReminderService()
     private let monthly = MonthlyTransactionsService()
+
+    private var attention: RecurringAttention {
+        suggestionService.attention(
+            activeSeries: recurringPayments.filter(\.isActive),
+            recurringTransactions: transactions.filter { $0.isRecurring && !$0.isExcluded }
+        )
+    }
 
     private var isCurrentMonth: Bool {
         Calendar.current.isDate(monthAnchor, equalTo: Date(), toGranularity: .month)
@@ -89,8 +100,48 @@ struct RecurringPaymentsView: View {
 
     var body: some View {
         let expectation = monthExpectation
+        let attention = attention
         let monthName = Formatters.month.string(from: monthAnchor)
         return List {
+            Section {
+                if attention.isEmpty {
+                    Label("You're all caught up on recurring payments.", systemImage: "checkmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(attention.missed) { item in
+                    AttentionRow(item: item, kind: .missed)
+                        .accessibilityIdentifier("recurring.missed")
+                }
+                ForEach(attention.dueSoon) { item in
+                    AttentionRow(item: item, kind: .dueSoon)
+                        .accessibilityIdentifier("recurring.dueSoon")
+                }
+            } header: {
+                Text("Needs Attention")
+            }
+
+            Section {
+                Toggle("Remind me before a payment is due", isOn: Binding(
+                    get: { reminderLeadDays > 0 },
+                    set: { on in
+                        reminderLeadDays = on ? max(reminderLeadDays, 2) : 0
+                        syncReminders()
+                    }
+                ))
+                .accessibilityIdentifier("recurring.reminderToggle")
+                if reminderLeadDays > 0 {
+                    Stepper("\(reminderLeadDays) day\(reminderLeadDays == 1 ? "" : "s") before",
+                            value: Binding(get: { reminderLeadDays }, set: { reminderLeadDays = $0; syncReminders() }),
+                            in: 1...14)
+                    .accessibilityIdentifier("recurring.reminderLead")
+                }
+            } header: {
+                Text("Reminders")
+            } footer: {
+                Text("A local notification at 9am, \(reminderLeadDays > 0 ? "\(reminderLeadDays) day\(reminderLeadDays == 1 ? "" : "s")" : "a few days") before each active series' next expected date.")
+            }
+
             Section {
                 HStack {
                     Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
@@ -215,6 +266,7 @@ struct RecurringPaymentsView: View {
         }
         .navigationTitle("Recurring")
         .themedListBackground()
+        .task(id: recurringPayments.count) { syncReminders() }
         .refreshable {
             // Occurrence / paid status is recomputed on every render from live
             // @Query data; this gives the pull-down its spinner.
@@ -257,6 +309,18 @@ struct RecurringPaymentsView: View {
             Button("Cancel", role: .cancel) { paymentPendingDeletion = nil }
         } message: {
             Text("Only the schedule is removed. Its transactions stay exactly as they are \u{2014} amounts, categories and recurring flags are untouched.")
+        }
+    }
+
+    private func syncReminders() {
+        let lead = reminderLeadDays > 0 ? reminderLeadDays : nil
+        let series = recurringPayments.filter(\.isActive)
+        Task {
+            if lead != nil, await reminderService.requestAuthorization() == false {
+                await MainActor.run { reminderLeadDays = 0 }
+                return
+            }
+            await reminderService.sync(activeSeries: series, leadDays: lead)
         }
     }
 
@@ -411,6 +475,32 @@ private struct UnifiedLooseTransactionRow: View {
                 .foregroundStyle(transaction.amount < 0 ? .green : .primary)
         }
         .opacity(transaction.isExcluded ? 0.5 : 1)
+    }
+}
+
+private struct AttentionRow: View {
+    enum Kind { case dueSoon, missed }
+    let item: RecurringAttention.Item
+    let kind: Kind
+
+    private var tint: Color { kind == .missed ? Theme.warning : .orange }
+    private var symbol: String { kind == .missed ? "exclamationmark.triangle.fill" : "clock.badge.exclamationmark" }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconBadge(systemName: symbol, tint: tint, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.merchantName).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text("\(kind == .missed ? "Missed" : "Due") \(Formatters.shortDate.string(from: item.date))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(Formatters.currencyString(for: item.amount))
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.merchantName) \(Formatters.currencyString(for: item.amount)) \(kind == .missed ? "missed" : "due") \(Formatters.shortDate.string(from: item.date))")
     }
 }
 

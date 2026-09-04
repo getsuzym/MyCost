@@ -30,8 +30,39 @@ struct MonthlySpendingSummary {
     let lowestCategory: CategorySpend?
 }
 
+/// One month's spend + income, for the trend chart.
+struct MonthSpend: Identifiable, Equatable {
+    let month: Date
+    let spent: Decimal
+    let income: Decimal
+    var id: Date { month }
+    var shortLabel: String {
+        let f = DateFormatter()
+        f.dateFormat = "LLL"
+        return f.string(from: month)
+    }
+}
+
 struct SpendingAnalytics {
     private let recurringSuggestionService = RecurringPaymentSuggestionService()
+
+    /// The last `count` calendar months (oldest first), each with its spend and
+    /// income total, ending with the month containing `endingAt`.
+    func trailingMonths(_ count: Int, endingAt: Date = .now, transactions: [Transaction]) -> [MonthSpend] {
+        let calendar = Calendar.current
+        guard count > 0, let thisMonth = calendar.dateInterval(of: .month, for: endingAt)?.start else { return [] }
+
+        return (0..<count).reversed().compactMap { offset -> MonthSpend? in
+            guard let start = calendar.date(byAdding: .month, value: -offset, to: thisMonth),
+                  let interval = calendar.dateInterval(of: .month, for: start) else { return nil }
+            let inMonth = transactions.filter {
+                !$0.isExcluded && $0.transactionDate >= interval.start && $0.transactionDate < interval.end
+            }
+            let spent = inMonth.filter(\.contributesToSpending).reduce(Decimal.zero) { $0 + $1.spendingAmount }
+            let income = inMonth.filter(\.isIncome).reduce(Decimal.zero) { $0 + $1.incomeAmount }
+            return MonthSpend(month: interval.start, spent: spent, income: income)
+        }
+    }
 
     func monthlySummary(
         for month: Date,

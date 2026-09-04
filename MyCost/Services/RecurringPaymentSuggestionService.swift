@@ -55,6 +55,27 @@ struct RecurringMonthExpectation: Equatable {
     )
 }
 
+/// Today-relative recurring-payment reminders shown at the top of the Recurring
+/// tab.
+struct RecurringAttention: Equatable {
+    struct Item: Identifiable, Equatable {
+        let seriesID: UUID
+        let merchantName: String
+        let amount: Decimal
+        let date: Date
+        var id: String { "\(seriesID.uuidString)|\(date.timeIntervalSinceReferenceDate)" }
+    }
+
+    /// Expected within the soon window, not yet seen.
+    var dueSoon: [Item]
+    /// Past their date (beyond the grace period), not yet seen.
+    var missed: [Item]
+
+    var isEmpty: Bool { dueSoon.isEmpty && missed.isEmpty }
+
+    static let none = RecurringAttention(dueSoon: [], missed: [])
+}
+
 struct RecurringPaymentSuggestionService {
     private let calendar: Calendar
 
@@ -173,6 +194,62 @@ struct RecurringPaymentSuggestionService {
 
     private static func matchKey(accountName: String, merchantName: String) -> String {
         "\(accountName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(MerchantRuleNormalizer.normalizedMerchantKey(for: merchantName))"
+    }
+
+    /// Today-relative "needs attention" across every active series: occurrences
+    /// due within `soonDays`, and occurrences `graceDays`+ past their date with
+    /// no matching transaction. Not month-scoped.
+    func attention(
+        activeSeries: [RecurringPayment],
+        recurringTransactions: [Transaction],
+        now: Date = .now,
+        soonDays: Int = 7,
+        graceDays: Int = 2,
+        lookbackDays: Int = 31
+    ) -> RecurringAttention {
+        let windowStart = calendar.date(byAdding: .day, value: -lookbackDays, to: now) ?? now
+        let windowEnd = calendar.date(byAdding: .day, value: soonDays, to: now) ?? now
+        let missedCutoff = calendar.date(byAdding: .day, value: -graceDays, to: now) ?? now
+
+        var due: [RecurringAttention.Item] = []
+        var missed: [RecurringAttention.Item] = []
+
+        for series in activeSeries {
+            let schedule = series.schedule(calendar: calendar)
+            // Occurrences across the window (prev / this / next month cover it).
+            let months = [-1, 0, 1].compactMap { calendar.date(byAdding: .month, value: $0, to: now) }
+            let dates = Set(months.flatMap { schedule.occurrences(inMonthContaining: $0) })
+                .filter { $0 >= windowStart && $0 <= windowEnd }
+                .sorted()
+            guard !dates.isEmpty else { continue }
+
+            let key = Self.matchKey(accountName: series.accountName, merchantName: series.merchantName)
+            let paidCount = recurringTransactions.filter { transaction in
+                let inWindow = transaction.transactionDate >= windowStart && transaction.transactionDate <= windowEnd
+                let linked = transaction.recurringPayment?.id == series.id
+                let keyed = transaction.recurringPayment == nil &&
+                    Self.matchKey(accountName: transaction.accountName, merchantName: transaction.merchantName) == key
+                return inWindow && (linked || keyed)
+            }.count
+
+            // Never flag an occurrence as "missed" that predates the series'
+            // declared next date — a brand-new series with a future first date
+            // hasn't missed anything.
+            let missedFloor = series.nextExpectedDate ?? windowStart
+
+            for (index, date) in dates.enumerated() where index >= paidCount {
+                let item = RecurringAttention.Item(seriesID: series.id, merchantName: series.merchantName,
+                                                   amount: series.expectedAmount, date: date)
+                if date < missedCutoff, date >= missedFloor {
+                    missed.append(item)
+                } else if date >= now {
+                    due.append(item)
+                }
+            }
+        }
+
+        return RecurringAttention(dueSoon: due.sorted { $0.date < $1.date },
+                                  missed: missed.sorted { $0.date < $1.date })
     }
 
     func nextExpectedDate(after date: Date, frequency: RecurrenceFrequency, customIntervalDays: Int = 30) -> Date? {

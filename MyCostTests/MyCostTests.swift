@@ -914,6 +914,53 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(october.occurrences.allSatisfy { gregorian.component(.month, from: $0.date) == 10 })
     }
 
+    func testAttentionListsDueSoonAndMissedOccurrences() {
+        let service = RecurringPaymentSuggestionService()
+        let now = date(2026, 9, 15)
+
+        // Monthly rent, expected the 3rd — that occurrence is missed (12 days
+        // past, unpaid).
+        let rent = RecurringPayment(
+            accountName: "Chequing", merchantName: "Rent", expectedAmount: 1800,
+            frequency: .monthly, nextExpectedDate: date(2026, 9, 3)
+        )
+        // Monthly gym, expected the 18th — due within 7 days.
+        let gym = RecurringPayment(
+            accountName: "Chequing", merchantName: "Gym", expectedAmount: 40,
+            frequency: .monthly, nextExpectedDate: date(2026, 9, 18)
+        )
+        // Netflix, expected the 10th, and it was paid — no attention.
+        let netflix = RecurringPayment(
+            accountName: "Chequing", merchantName: "Netflix", expectedAmount: 20,
+            frequency: .monthly, nextExpectedDate: date(2026, 9, 10)
+        )
+        let netflixPaid = Transaction(
+            accountName: "Chequing", merchantName: "Netflix", amount: 20,
+            transactionDate: date(2026, 9, 10), isRecurring: true
+        )
+
+        let attention = service.attention(
+            activeSeries: [rent, gym, netflix],
+            recurringTransactions: [netflixPaid],
+            now: now
+        )
+
+        XCTAssertEqual(attention.missed.map(\.merchantName), ["Rent"])
+        XCTAssertEqual(attention.dueSoon.map(\.merchantName), ["Gym"])
+        XCTAssertFalse(attention.isEmpty)
+    }
+
+    func testAttentionIsEmptyWhenEverythingRecentIsPaidOrFarOff() {
+        let service = RecurringPaymentSuggestionService()
+        let now = date(2026, 9, 15)
+        // Quarterly insurance due in December — outside the 7-day soon window.
+        let insurance = RecurringPayment(
+            accountName: "Chequing", merchantName: "Insurance", expectedAmount: 600,
+            frequency: .quarterly, nextExpectedDate: date(2026, 12, 1)
+        )
+        XCTAssertTrue(service.attention(activeSeries: [insurance], recurringTransactions: [], now: now).isEmpty)
+    }
+
     // MARK: - Flexible recurrence rules
 
     func testNthWeekdayScheduleLandsOnTheFirstMondayOfEachMonth() {
@@ -3652,6 +3699,23 @@ final class MyCostTests: XCTestCase {
         insertTransaction("z", amount: 200, on: date(2026, 8, 5), category: c)
         try context.save()
         XCTAssertEqual(try summaryFor(date(2026, 8, 15)).categoryTotals.map(\.categoryName), ["B", "C", "A"])
+    }
+
+    func testTrailingMonthsReturnsSpendAndIncomePerMonthOldestFirst() throws {
+        let salary = makeCategory("Salary", sortOrder: 0)
+        insertTransaction("July buy", amount: 100, on: date(2026, 7, 10))
+        insertTransaction("Aug buy", amount: 250, on: date(2026, 8, 12))
+        let paycheck = insertTransaction("PAYROLL", amount: 3000, on: date(2026, 8, 1), category: salary)
+        paycheck.isIncome = true
+        try context.save()
+
+        let months = SpendingAnalytics().trailingMonths(3, endingAt: date(2026, 8, 20), transactions: try allTransactions())
+        XCTAssertEqual(months.count, 3)
+        XCTAssertEqual(months.map { Calendar.current.component(.month, from: $0.month) }, [6, 7, 8])
+        XCTAssertEqual(months[0].spent, 0)      // June — nothing
+        XCTAssertEqual(months[1].spent, 100)   // July
+        XCTAssertEqual(months[2].spent, 250)   // August (the paycheck is income, not spend)
+        XCTAssertEqual(months[2].income, 3000)
     }
 
     func testPercentagesRecalculateAfterAddEditExcludeDirectionAndDelete() throws {

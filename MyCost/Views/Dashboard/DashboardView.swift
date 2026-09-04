@@ -107,6 +107,19 @@ struct DashboardView: View {
                 .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
             }
 
+            Section("Trend") {
+                let trend = analytics.trailingMonths(6, endingAt: monthAnchor, transactions: transactions)
+                if trend.allSatisfy({ $0.spent == 0 && $0.income == 0 }) {
+                    Text("Not enough history yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    SpendingTrendChart(months: trend, highlightedMonth: monthAnchor)
+                        .frame(height: 170)
+                        .padding(.vertical, 6)
+                        .accessibilityIdentifier("dashboard.trendChart")
+                }
+            }
+
             Section("Categories") {
                 if summary.categoryTotals.isEmpty {
                     Text("No spending this month")
@@ -300,6 +313,42 @@ private struct CategoryBreakdownRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(category.categoryName), \(Formatters.currencyString(for: category.amount)), \(Formatters.percentString(category.percentageOfTotal)) of spending")
+    }
+}
+
+/// 6-month spend bars with an income overlay line. The selected month's bar is
+/// accented.
+private struct SpendingTrendChart: View {
+    let months: [MonthSpend]
+    let highlightedMonth: Date
+
+    private func isHighlighted(_ month: Date) -> Bool {
+        Calendar.current.isDate(month, equalTo: highlightedMonth, toGranularity: .month)
+    }
+
+    var body: some View {
+        Chart(months) { point in
+            BarMark(
+                x: .value("Month", point.shortLabel),
+                y: .value("Spent", NSDecimalNumber(decimal: point.spent).doubleValue)
+            )
+            .foregroundStyle(isHighlighted(point.month) ? Theme.accent : Theme.accent.opacity(0.35))
+            .cornerRadius(4)
+
+            if months.contains(where: { $0.income > 0 }) {
+                LineMark(
+                    x: .value("Month", point.shortLabel),
+                    y: .value("Income", NSDecimalNumber(decimal: point.income).doubleValue)
+                )
+                .foregroundStyle(Theme.positive)
+                .symbol(.circle)
+                .interpolationMethod(.catmullRom)
+            }
+        }
+        .chartYAxis {
+            AxisMarks(format: .currency(code: Formatters.currency.currencyCode ?? "USD").precision(.fractionLength(0)))
+        }
+        .chartLegend(.hidden)
     }
 }
 

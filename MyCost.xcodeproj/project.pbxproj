@@ -58,6 +58,7 @@
 		000000000000000000000917 /* DataPortabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000918 /* DataPortabilityService.swift */; };
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
+		00000000000000000000091B /* RecurringReminderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000091C /* RecurringReminderService.swift */; };
 		00000000000000000000090B /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090C /* AppLog.swift */; };
 		00000000000000000000090F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000910 /* Assets.xcassets */; };
 		000000000000000000000907 /* MerchantRuleBackfillService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000908 /* MerchantRuleBackfillService.swift */; };
@@ -130,6 +131,7 @@
 		000000000000000000000918 /* DataPortabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataPortabilityService.swift; sourceTree = "<group>"; };
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
+		00000000000000000000091C /* RecurringReminderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringReminderService.swift; sourceTree = "<group>"; };
 		00000000000000000000090C /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		000000000000000000000910 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000908 /* MerchantRuleBackfillService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleBackfillService.swift; sourceTree = "<group>"; };
@@ -267,6 +269,7 @@
 				000000000000000000000918 /* DataPortabilityService.swift */,
 				000000000000000000000902 /* RecurrenceSchedule.swift */,
 				000000000000000000000906 /* RecurringPaymentService.swift */,
+				00000000000000000000091C /* RecurringReminderService.swift */,
 				00000000000000000000090C /* AppLog.swift */,
 				000000000000000000000908 /* MerchantRuleBackfillService.swift */,
 				000000000000000000000035 /* TransactionNormalizer.swift */,
@@ -533,6 +536,7 @@
 				000000000000000000000917 /* DataPortabilityService.swift in Sources */,
 				000000000000000000000901 /* RecurrenceSchedule.swift in Sources */,
 				000000000000000000000905 /* RecurringPaymentService.swift in Sources */,
+				00000000000000000000091B /* RecurringReminderService.swift in Sources */,
 				00000000000000000000090B /* AppLog.swift in Sources */,
 				000000000000000000000907 /* MerchantRuleBackfillService.swift in Sources */,
 				000000000000000000000134 /* TransactionNormalizer.swift in Sources */,
