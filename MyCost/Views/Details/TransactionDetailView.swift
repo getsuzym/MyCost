@@ -7,6 +7,7 @@ struct TransactionDetailView: View {
 
     @Bindable var transaction: Transaction
     @State private var isEditing = false
+    @State private var isShowingTagPicker = false
     @State private var isShowingDeleteConfirmation = false
 
     var body: some View {
@@ -35,11 +36,21 @@ struct TransactionDetailView: View {
                 }
             }
 
-            if !transaction.tags.isEmpty {
-                Section("Tags") {
+            Section {
+                if transaction.tags.isEmpty {
+                    Text("No tags").foregroundStyle(.secondary)
+                } else {
                     Text(transaction.tags.alphabetizedByName().map(\.name).joined(separator: ", "))
                         .foregroundStyle(.secondary)
                 }
+                Button {
+                    isShowingTagPicker = true
+                } label: {
+                    Label("Edit Tags", systemImage: "tag")
+                }
+                .accessibilityIdentifier("transactionDetail.editTags")
+            } header: {
+                Text("Tags")
             }
 
             if transaction.isSplit {
@@ -78,6 +89,9 @@ struct TransactionDetailView: View {
                 TransactionEditorView(mode: .edit(transaction))
             }
         }
+        .sheet(isPresented: $isShowingTagPicker) {
+            TransactionTagPickerView(transaction: transaction)
+        }
         .confirmationDialog("Delete this transaction?", isPresented: $isShowingDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive, action: deleteTransaction)
             Button("Cancel", role: .cancel) {}
@@ -103,6 +117,90 @@ struct TransactionDetailView: View {
         // nothing left for this screen to show either way.
         dismiss()
         TrashBin.shared.deleteTransactions([transaction], modelContext: modelContext)
+    }
+}
+
+/// Add/remove tags without opening the full transaction editor. Every tap
+/// applies and saves immediately (same philosophy as `TransactionDetailView`'s
+/// inline Recurring toggle) — there's no separate Save, just Done.
+private struct TransactionTagPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Bindable var transaction: Transaction
+    @Query private var allTags: [Tag]
+    @State private var newTagName = ""
+
+    private let tagService = TagService()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if allTags.isEmpty {
+                        Text("No tags yet — add one below.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(allTags.alphabetizedByName()) { tag in
+                        Button {
+                            toggle(tag)
+                        } label: {
+                            HStack {
+                                Image(systemName: isApplied(tag) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(isApplied(tag) ? Theme.accent : .secondary)
+                                Text(tag.name).foregroundStyle(.primary)
+                                Spacer()
+                            }
+                        }
+                        .accessibilityIdentifier("transactionDetail.tagRow")
+                    }
+
+                    HStack {
+                        TextField("New tag", text: $newTagName)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit(addTypedTag)
+                            .accessibilityIdentifier("transactionDetail.newTag")
+                        Button("Add", action: addTypedTag)
+                            .disabled(newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } footer: {
+                    Text("Tap a tag to add or remove it — changes save right away.")
+                }
+            }
+            .themedListBackground()
+            .navigationTitle("Tags")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func isApplied(_ tag: Tag) -> Bool {
+        transaction.tags.contains { $0.id == tag.id }
+    }
+
+    private func toggle(_ tag: Tag) {
+        if isApplied(tag) {
+            tagService.detach(tag, from: transaction)
+        } else {
+            tagService.attach(tag, to: transaction)
+        }
+        transaction.updatedAt = .now
+        modelContext.saveOrLog("toggle tag on transaction")
+    }
+
+    private func addTypedTag() {
+        let name = newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if let tag = tagService.upsert(name: name, in: allTags, modelContext: modelContext) {
+            tagService.attach(tag, to: transaction)
+            transaction.updatedAt = .now
+            modelContext.saveOrLog("add new tag to transaction")
+        }
+        newTagName = ""
     }
 }
 
