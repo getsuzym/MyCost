@@ -1,6 +1,31 @@
 import SwiftData
 import SwiftUI
 
+/// All / Recurring / Non-Recurring filter for a transaction list.
+enum RecurringFilter: String, CaseIterable, Identifiable {
+    case all
+    case recurring
+    case nonRecurring
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .recurring: "Recurring"
+        case .nonRecurring: "Non-Recurring"
+        }
+    }
+
+    func includes(_ transaction: Transaction) -> Bool {
+        switch self {
+        case .all: true
+        case .recurring: transaction.isRecurring
+        case .nonRecurring: !transaction.isRecurring
+        }
+    }
+}
+
 struct TransactionHistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]

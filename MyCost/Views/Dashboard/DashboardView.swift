@@ -36,11 +36,12 @@ struct DashboardView: View {
     /// Which month the dashboard is showing. Starts at the current month; the
     /// user can step back to see an imported historical statement.
     @State private var monthAnchor = Date()
-    /// The "Months" and "Trend" lists are collapsed by default and remember
-    /// their state — supplementary detail, not what someone opens the app to
-    /// check first.
+    /// The "Months" list and each category's transaction rows are collapsed by
+    /// default and remember their state — supplementary detail, not the
+    /// headline "how much, on what" the Dashboard leads with. The Trend chart
+    /// stays always-visible, right under Categories.
     @AppStorage("dashboard.monthsExpanded") private var monthsExpanded = false
-    @AppStorage("dashboard.trendExpanded") private var trendExpanded = false
+    @AppStorage("dashboard.categoryDetailsExpanded") private var categoryDetailsExpanded = false
 
     private let analytics = SpendingAnalytics()
     private let monthly = MonthlyTransactionsService()
@@ -113,34 +114,35 @@ struct DashboardView: View {
                 }
             }
 
-            Section("This Month") {
-                let recurringCount = monthly.transactions(inMonthContaining: monthAnchor, from: transactions)
-                    .filter { $0.isRecurring && !$0.isExcluded && $0.contributesToSpending }.count
-
-                NavigationLink {
-                    MonthTransactionsListView(month: monthAnchor, scope: .recurring)
-                } label: {
-                    MetricTile(
-                        title: "Recurring",
-                        value: Formatters.currencyString(for: summary.recurringTotal),
-                        systemImage: "repeat",
-                        tint: Theme.accent,
-                        caption: "\(recurringCount) transaction\(recurringCount == 1 ? "" : "s")"
+            Section("Categories") {
+                if summary.categoryTotals.isEmpty {
+                    Text("No spending this month")
+                        .foregroundStyle(.secondary)
+                } else {
+                    SpendingDistributionChart(
+                        categories: summary.categoryTotals,
+                        colorForName: color(forCategory:)
                     )
-                }
-                .accessibilityIdentifier("dashboard.recurringThisMonth")
+                    .frame(height: 190)
+                    .padding(.vertical, 6)
+                    .accessibilityIdentifier("dashboard.categoryChart")
 
-                NavigationLink {
-                    MonthTransactionsListView(month: monthAnchor, scope: .nonRecurring)
-                } label: {
-                    MetricTile(
-                        title: "Non-Recurring",
-                        value: Formatters.currencyString(for: summary.nonRecurringTotal),
-                        systemImage: "cart.fill",
-                        tint: Color(light: 0x0E7C86, dark: 0x4FD1DB)
-                    )
+                    DisclosureGroup("Details", isExpanded: $categoryDetailsExpanded) {
+                        ForEach(summary.categoryTotals) { categoryTotal in
+                            NavigationLink {
+                                CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
+                            } label: {
+                                CategoryBreakdownRow(
+                                    category: categoryTotal,
+                                    tint: color(forCategory: categoryTotal.categoryName),
+                                    symbol: symbol(forCategory: categoryTotal.categoryName)
+                                )
+                            }
+                            .accessibilityIdentifier("dashboard.category")
+                        }
+                    }
+                    .accessibilityIdentifier("dashboard.categoryDetailsDisclosure")
                 }
-                .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
             }
 
             Section {
@@ -149,44 +151,13 @@ struct DashboardView: View {
                     Text("Not enough history yet.")
                         .foregroundStyle(.secondary)
                 } else {
-                    DisclosureGroup("6-Month Trend", isExpanded: $trendExpanded) {
-                        SpendingTrendChart(months: trend, highlightedMonth: monthAnchor)
-                            .frame(height: 170)
-                            .padding(.vertical, 6)
-                            .accessibilityIdentifier("dashboard.trendChart")
-                    }
-                    .accessibilityIdentifier("dashboard.trendDisclosure")
+                    SpendingTrendChart(months: trend, highlightedMonth: monthAnchor)
+                        .frame(height: 170)
+                        .padding(.vertical, 6)
+                        .accessibilityIdentifier("dashboard.trendChart")
                 }
-            }
-
-            Section("Categories") {
-                if summary.categoryTotals.isEmpty {
-                    Text("No spending this month")
-                        .foregroundStyle(.secondary)
-                }
-
-                if !summary.categoryTotals.isEmpty {
-                    SpendingDistributionChart(
-                        categories: summary.categoryTotals,
-                        colorForName: color(forCategory:)
-                    )
-                    .frame(height: 190)
-                    .padding(.vertical, 6)
-                    .accessibilityIdentifier("dashboard.categoryChart")
-                }
-
-                ForEach(summary.categoryTotals) { categoryTotal in
-                    NavigationLink {
-                        CategoryDetailView(categoryName: categoryTotal.categoryName, month: monthAnchor)
-                    } label: {
-                        CategoryBreakdownRow(
-                            category: categoryTotal,
-                            tint: color(forCategory: categoryTotal.categoryName),
-                            symbol: symbol(forCategory: categoryTotal.categoryName)
-                        )
-                    }
-                    .accessibilityIdentifier("dashboard.category")
-                }
+            } header: {
+                Text("Trend")
             }
 
             Section {

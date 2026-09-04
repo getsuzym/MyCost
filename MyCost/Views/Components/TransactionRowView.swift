@@ -31,6 +31,13 @@ struct TransactionRowView: View {
                     Text(transaction.category?.name ?? "Uncategorized")
                     Text("·")
                     Text(Formatters.shortDate.string(from: transaction.transactionDate))
+                    if transaction.isExcluded {
+                        Text("· Excluded").foregroundStyle(.secondary)
+                    } else if transaction.isIncome {
+                        Text("· Income").foregroundStyle(Theme.positive)
+                    } else if !transaction.countsAsSpending {
+                        Text("· Not counted").foregroundStyle(.secondary)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -46,15 +53,17 @@ struct TransactionRowView: View {
                     .foregroundStyle(isRefund ? Theme.positive : Color.primary)
 
                 if transaction.isRecurring {
-                    Text("Recurring")
+                    Text(transaction.recurringPayment?.schedule().label ?? "Recurring")
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
                         .background(Theme.accent.opacity(0.15), in: Capsule())
                         .foregroundStyle(Theme.accent)
+                        .lineLimit(1)
                 }
             }
         }
         .padding(.vertical, 2)
+        .opacity(transaction.isExcluded ? 0.6 : 1)
     }
 }
