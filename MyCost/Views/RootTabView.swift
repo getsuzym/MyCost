@@ -5,6 +5,13 @@ struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var ocrReviewStore = OCRTransactionReviewStore()
     @StateObject private var nav = AppNavigationModel()
+    @AppStorage("mycost.hasOnboarded") private var hasOnboarded = false
+
+    /// UI tests launch straight into the tabs; the intro cover would swallow
+    /// their taps.
+    private var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains("-ui-testing")
+    }
 
     var body: some View {
         TabView {
@@ -71,6 +78,16 @@ struct RootTabView: View {
             SeedDataService.countAllTransactionsByDefaultIfNeeded(modelContext: modelContext)
             SeedDataService.tagLikelyIncomeIfNeeded(modelContext: modelContext)
         }
+        .fullScreenCover(isPresented: showOnboarding) {
+            OnboardingView()
+        }
+    }
+
+    private var showOnboarding: Binding<Bool> {
+        Binding(
+            get: { !hasOnboarded && !isUITesting },
+            set: { presented in if !presented { hasOnboarded = true } }
+        )
     }
 
     @ViewBuilder

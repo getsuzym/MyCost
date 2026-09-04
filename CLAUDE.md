@@ -204,3 +204,7 @@ The source of truth for "this month's recurring spend" is the per-transaction `i
 ### Startup
 
 `RootTabView.task` calls `SeedDataService.seedDefaultCategoriesIfNeeded` on every launch; it no-ops if any `Category` exists. The 8 default categories are `Category.defaults`.
+
+### First-run onboarding — `OnboardingView`
+
+`RootTabView` presents `OnboardingView` in a `.fullScreenCover` gated on `@AppStorage("mycost.hasOnboarded")` (default `false`), suppressed under `-ui-testing` so UI tests launch straight into the tabs. Three paged screens (`TabView(.page)`): what MyCost does, screenshot import, and an optional "your main account" picker. Dismissing the cover (Get Started, Skip, or the setter path) flips `hasOnboarded = true`; picking Credit card / Chequing on the last page `AccountService.upsert`s a "Default" `Account` with that type so the first import can skip the guess-and-confirm step. View-only — no new service logic.
