@@ -122,27 +122,6 @@ struct RecurringPaymentsView: View {
             }
 
             Section {
-                Toggle("Remind me before a payment is due", isOn: Binding(
-                    get: { reminderLeadDays > 0 },
-                    set: { on in
-                        reminderLeadDays = on ? max(reminderLeadDays, 2) : 0
-                        syncReminders()
-                    }
-                ))
-                .accessibilityIdentifier("recurring.reminderToggle")
-                if reminderLeadDays > 0 {
-                    Stepper("\(reminderLeadDays) day\(reminderLeadDays == 1 ? "" : "s") before",
-                            value: Binding(get: { reminderLeadDays }, set: { reminderLeadDays = $0; syncReminders() }),
-                            in: 1...14)
-                    .accessibilityIdentifier("recurring.reminderLead")
-                }
-            } header: {
-                Text("Reminders")
-            } footer: {
-                Text("A local notification at 9am, \(reminderLeadDays > 0 ? "\(reminderLeadDays) day\(reminderLeadDays == 1 ? "" : "s")" : "a few days") before each active series' next expected date.")
-            }
-
-            Section {
                 HStack {
                     Button { stepMonth(-1) } label: { Image(systemName: "chevron.left") }
                         .accessibilityLabel("Previous month")

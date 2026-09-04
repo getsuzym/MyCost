@@ -1,14 +1,11 @@
 import SwiftUI
 
 /// The "More" tab — a drill-down list to the secondary management screens that
-/// no longer have their own bottom tab.
+/// no longer have their own bottom tab. Every preference/toggle lives in
+/// Settings, not scattered across these rows or on Dashboard/Recurring.
 struct MoreView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
     @EnvironmentObject private var nav: AppNavigationModel
-    @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
-    @State private var showsNoPasscodeAlert = false
-
-    private let lockService = AppLockService()
 
     var body: some View {
         List {
@@ -24,6 +21,35 @@ struct MoreView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("more.settings")
+            }
+
+            Section {
+                NavigationLink {
+                    CategoryManagementView()
+                } label: {
+                    Label("Categories", systemImage: "folder")
+                }
+                .accessibilityIdentifier("more.categories")
+
+                NavigationLink {
+                    MerchantRulesView()
+                } label: {
+                    Label("Merchant Rules", systemImage: "wand.and.stars")
+                }
+                .accessibilityIdentifier("more.rules")
+            } header: {
+                Text("Organize")
+            } footer: {
+                Text("How transactions get sorted and named — visited occasionally, not daily, so these moved off the main tab bar.")
+            }
+
             Section("Manage") {
                 NavigationLink {
                     TransactionHistoryView()
@@ -31,13 +57,6 @@ struct MoreView: View {
                     Label("All Transactions", systemImage: "list.bullet")
                 }
                 .accessibilityIdentifier("more.transactions")
-
-                NavigationLink {
-                    BudgetsView()
-                } label: {
-                    Label("Budgets", systemImage: "chart.bar.doc.horizontal")
-                }
-                .accessibilityIdentifier("more.budgets")
 
                 NavigationLink {
                     TagManagementView()
@@ -52,39 +71,9 @@ struct MoreView: View {
                     Label("Accounts", systemImage: "creditcard")
                 }
                 .accessibilityIdentifier("more.accounts")
-
-                NavigationLink {
-                    DataPortabilityView()
-                } label: {
-                    Label("Export & Backup", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("more.data")
-            }
-
-            Section {
-                Toggle("Require Face ID / Passcode", isOn: Binding(
-                    get: { appLockEnabled },
-                    set: { newValue in
-                        if newValue, !lockService.canAuthenticate() {
-                            showsNoPasscodeAlert = true
-                            return
-                        }
-                        appLockEnabled = newValue
-                    }
-                ))
-                .accessibilityIdentifier("more.appLock")
-            } header: {
-                Text("Privacy")
-            } footer: {
-                Text("Locks MyCost whenever it leaves the foreground. Unlocks with Face ID, Touch ID, or your device passcode.")
             }
         }
         .navigationTitle("More")
         .themedListBackground()
-        .alert("Can't Enable App Lock", isPresented: $showsNoPasscodeAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Set a passcode for this device in Settings first.")
-        }
     }
 }

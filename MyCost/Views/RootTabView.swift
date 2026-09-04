@@ -39,18 +39,6 @@ struct RootTabView: View {
             .accessibilityIdentifier("tab.recurring")
 
             NavigationStack {
-                CategoryManagementView()
-            }
-            .tabItem { Label("Categories", systemImage: "folder") }
-            .accessibilityIdentifier("tab.categories")
-
-            NavigationStack {
-                MerchantRulesView()
-            }
-            .tabItem { Label("Rules", systemImage: "wand.and.stars") }
-            .accessibilityIdentifier("tab.rules")
-
-            NavigationStack {
                 MoreView()
             }
             .tabItem { Label("More", systemImage: "ellipsis.circle") }

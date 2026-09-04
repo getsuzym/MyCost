@@ -44,6 +44,11 @@ struct TransactionEditorView: View {
     @State private var note = ""
     @State private var selectedTagIDs: Set<UUID> = []
     @State private var newTagName = ""
+    /// Progressive disclosure: both start collapsed and only auto-expand once,
+    /// at load, when there's already something to show — an editor that opens
+    /// with everything visible regardless of relevance gets overwhelming fast.
+    @State private var isTagsExpanded = false
+    @State private var isAttachRuleExpanded = false
     /// Split editing — edit mode only (see `SplitRowDraft`).
     @State private var isSplitting = false
     @State private var splitRows: [SplitRowDraft] = []
@@ -96,6 +101,10 @@ struct TransactionEditorView: View {
             if results.count == 5 { break }
         }
         return results
+    }
+
+    private var selectedTagNames: String {
+        allTags.filter { selectedTagIDs.contains($0.id) }.alphabetizedByName().map(\.name).joined(separator: ", ")
     }
 
     /// Live account-type-aware interpretation of the entered amount.
@@ -210,31 +219,40 @@ struct TransactionEditorView: View {
             }
 
             Section {
-                ForEach(allTags.alphabetizedByName()) { tag in
-                    Button {
-                        if selectedTagIDs.contains(tag.id) { selectedTagIDs.remove(tag.id) }
-                        else { selectedTagIDs.insert(tag.id) }
-                    } label: {
-                        HStack {
-                            Image(systemName: selectedTagIDs.contains(tag.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selectedTagIDs.contains(tag.id) ? Theme.accent : .secondary)
-                            Text(tag.name)
-                            Spacer()
+                DisclosureGroup(isExpanded: $isTagsExpanded) {
+                    ForEach(allTags.alphabetizedByName()) { tag in
+                        Button {
+                            if selectedTagIDs.contains(tag.id) { selectedTagIDs.remove(tag.id) }
+                            else { selectedTagIDs.insert(tag.id) }
+                        } label: {
+                            HStack {
+                                Image(systemName: selectedTagIDs.contains(tag.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedTagIDs.contains(tag.id) ? Theme.accent : .secondary)
+                                Text(tag.name)
+                                Spacer()
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("transactionEditor.tag")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("transactionEditor.tag")
-                }
 
-                HStack {
-                    TextField("New tag", text: $newTagName)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onSubmit(addTypedTag)
-                        .accessibilityIdentifier("transactionEditor.newTag")
-                    Button("Add", action: addTypedTag)
-                        .disabled(newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    HStack {
+                        TextField("New tag", text: $newTagName)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit(addTypedTag)
+                            .accessibilityIdentifier("transactionEditor.newTag")
+                        Button("Add", action: addTypedTag)
+                            .disabled(newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } label: {
+                    if selectedTagIDs.isEmpty {
+                        Text("No tags").foregroundStyle(.secondary)
+                    } else {
+                        Text(selectedTagNames)
+                    }
                 }
+                .accessibilityIdentifier("transactionEditor.tagsDisclosure")
             } header: {
                 Text("Tags")
             } footer: {
@@ -327,29 +345,42 @@ struct TransactionEditorView: View {
             }
 
             Section {
-                if merchantRules.isEmpty {
-                    Text("No saved rules yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    if inlineMatchingRules.isEmpty {
-                        Text("No rule's text matches this transaction \u{2014} pick one under \u{201C}Other rules\u{201D} to attach it anyway.")
-                            .font(.caption)
+                DisclosureGroup(isExpanded: $isAttachRuleExpanded) {
+                    if merchantRules.isEmpty {
+                        Text("No saved rules yet.")
                             .foregroundStyle(.secondary)
-                    }
-                    ForEach(inlineMatchingRules) { rule in
-                        Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
-                            .accessibilityIdentifier("transactionEditor.attachRule")
-                    }
+                    } else {
+                        if inlineMatchingRules.isEmpty {
+                            Text("No rule's text matches this transaction \u{2014} pick one under \u{201C}Other rules\u{201D} to attach it anyway.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(inlineMatchingRules) { rule in
+                            Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
+                                .accessibilityIdentifier("transactionEditor.attachRule")
+                        }
 
-                    if !inlineOtherRules.isEmpty {
-                        DisclosureGroup("Other rules (\(inlineOtherRules.count))") {
-                            ForEach(inlineOtherRules) { rule in
-                                Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
-                                    .accessibilityIdentifier("transactionEditor.attachRuleOther")
+                        if !inlineOtherRules.isEmpty {
+                            DisclosureGroup("Other rules (\(inlineOtherRules.count))") {
+                                ForEach(inlineOtherRules) { rule in
+                                    Button { attachRule(rule) } label: { InlineRuleRow(rule: rule) }
+                                        .accessibilityIdentifier("transactionEditor.attachRuleOther")
+                                }
                             }
                         }
                     }
+                } label: {
+                    if merchantRules.isEmpty {
+                        Text("No saved rules yet").foregroundStyle(.secondary)
+                    } else if !inlineMatchingRules.isEmpty {
+                        Text("\(inlineMatchingRules.count) matching rule\(inlineMatchingRules.count == 1 ? "" : "s") found")
+                            .foregroundStyle(Theme.accent)
+                    } else {
+                        Text("Browse \(merchantRules.count) saved rule\(merchantRules.count == 1 ? "" : "s")")
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .accessibilityIdentifier("transactionEditor.attachRuleDisclosure")
             } header: {
                 Text("Attach a Merchant Rule")
             } footer: {
@@ -602,6 +633,8 @@ struct TransactionEditorView: View {
         }()
         note = transaction.note
         selectedTagIDs = Set(transaction.tags.map(\.id))
+        isTagsExpanded = !selectedTagIDs.isEmpty
+        isAttachRuleExpanded = !inlineMatchingRules.isEmpty
         isSplitting = transaction.isSplit
         splitRows = transaction.splits.map {
             SplitRowDraft(id: $0.id, categoryID: $0.category?.id, amountText: NSDecimalNumber(decimal: $0.amount).stringValue)

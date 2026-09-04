@@ -2,6 +2,28 @@ import Charts
 import SwiftData
 import SwiftUI
 
+/// Which way this month's spend moved relative to last month, for the hero
+/// card's trend callout.
+private enum TrendDirection {
+    case up, down, flat
+
+    var symbolName: String {
+        switch self {
+        case .up: "arrow.up.right"
+        case .down: "arrow.down.right"
+        case .flat: "arrow.right"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .up: Theme.warning
+        case .down: Theme.positive
+        case .flat: .secondary
+        }
+    }
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
     @EnvironmentObject private var nav: AppNavigationModel
@@ -14,10 +36,11 @@ struct DashboardView: View {
     /// Which month the dashboard is showing. Starts at the current month; the
     /// user can step back to see an imported historical statement.
     @State private var monthAnchor = Date()
-    /// The "Months" list is collapsed by default and remembers its state.
+    /// The "Months" and "Trend" lists are collapsed by default and remember
+    /// their state — supplementary detail, not what someone opens the app to
+    /// check first.
     @AppStorage("dashboard.monthsExpanded") private var monthsExpanded = false
-    /// Mirrors `DataPortabilityView`'s tracking of the last JSON export.
-    @AppStorage("mycost.lastBackupExportAt") private var lastBackupExportTimestamp: Double = 0
+    @AppStorage("dashboard.trendExpanded") private var trendExpanded = false
 
     private let analytics = SpendingAnalytics()
     private let monthly = MonthlyTransactionsService()
@@ -35,13 +58,20 @@ struct DashboardView: View {
         monthly.monthsRepresented(in: transactions)
     }
 
-    /// There's real data to lose and no iCloud sync yet, so nudge toward a
-    /// manual backup once it's overdue. Never shown on an empty, freshly
-    /// installed app.
-    private var showsBackupReminder: Bool {
-        guard !transactions.isEmpty else { return false }
-        let lastBackupDate = lastBackupExportTimestamp == 0 ? nil : Date(timeIntervalSinceReferenceDate: lastBackupExportTimestamp)
-        return DataPortabilityService.isBackupOverdue(lastBackupAt: lastBackupDate)
+    /// One line comparing this month's spend to last month's, for the hero
+    /// card — "how am I doing" at a glance, without opening the (now
+    /// collapsed-by-default) Trend chart. `nil` when there's no prior month or
+    /// last month had nothing spent (a percentage would be meaningless).
+    private var trendCallout: (text: String, direction: TrendDirection)? {
+        let trail = analytics.trailingMonths(2, endingAt: monthAnchor, transactions: transactions)
+        guard trail.count == 2, trail[0].spent > 0 else { return nil }
+        let previous = trail[0]
+        let current = trail[1]
+        let previousValue = NSDecimalNumber(decimal: previous.spent).doubleValue
+        let change = (NSDecimalNumber(decimal: current.spent - previous.spent).doubleValue / previousValue) * 100
+        guard abs(change) >= 1 else { return ("About the same as \(previous.shortLabel)", .flat) }
+        let word = change > 0 ? "Up" : "Down"
+        return ("\(word) \(Formatters.percentString(abs(change))) vs \(previous.shortLabel)", change > 0 ? .up : .down)
     }
 
     private func color(forCategory name: String) -> Color {
@@ -71,35 +101,16 @@ struct DashboardView: View {
                     .listRowSeparator(.hidden)
             }
 
-            if showsBackupReminder {
-                Section {
-                    NavigationLink {
-                        DataPortabilityView()
-                    } label: {
-                        Label("Back up your data", systemImage: "externaldrive.badge.exclamationmark")
-                            .font(.callout)
-                    }
-                    .accessibilityIdentifier("dashboard.backupReminder")
-                } footer: {
-                    Text("It's been over 30 days since your last backup, and MyCost doesn't sync to iCloud yet.")
-                }
-            }
-
-            Section {
-                if budgetRows.isEmpty {
-                    NavigationLink { BudgetsView() } label: {
-                        Label("Set a monthly budget", systemImage: "chart.bar.doc.horizontal")
-                            .font(.callout)
-                    }
-                    .accessibilityIdentifier("dashboard.addBudget")
-                } else {
+            // No CTA when there are no budgets — setting one is a Settings
+            // action now, not a Dashboard prompt. This section simply doesn't
+            // appear until there's real progress to show.
+            if !budgetRows.isEmpty {
+                Section("Budget") {
                     ForEach(budgetRows.prefix(4)) { row in
                         NavigationLink { BudgetsView() } label: { BudgetProgressRow(progress: row) }
                             .accessibilityIdentifier("dashboard.budgetRow")
                     }
                 }
-            } header: {
-                Text("Budget")
             }
 
             Section("This Month") {
@@ -132,16 +143,19 @@ struct DashboardView: View {
                 .accessibilityIdentifier("dashboard.nonRecurringThisMonth")
             }
 
-            Section("Trend") {
+            Section {
                 let trend = analytics.trailingMonths(6, endingAt: monthAnchor, transactions: transactions)
                 if trend.allSatisfy({ $0.spent == 0 && $0.income == 0 }) {
                     Text("Not enough history yet.")
                         .foregroundStyle(.secondary)
                 } else {
-                    SpendingTrendChart(months: trend, highlightedMonth: monthAnchor)
-                        .frame(height: 170)
-                        .padding(.vertical, 6)
-                        .accessibilityIdentifier("dashboard.trendChart")
+                    DisclosureGroup("6-Month Trend", isExpanded: $trendExpanded) {
+                        SpendingTrendChart(months: trend, highlightedMonth: monthAnchor)
+                            .frame(height: 170)
+                            .padding(.vertical, 6)
+                            .accessibilityIdentifier("dashboard.trendChart")
+                    }
+                    .accessibilityIdentifier("dashboard.trendDisclosure")
                 }
             }
 
@@ -268,6 +282,12 @@ struct DashboardView: View {
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                     .accessibilityIdentifier("dashboard.monthlyTotal")
+                if let trendCallout {
+                    Label(trendCallout.text, systemImage: trendCallout.direction.symbolName)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(trendCallout.direction.tint)
+                        .accessibilityIdentifier("dashboard.trendCallout")
+                }
             }
 
             if summary.incomeTotal > 0 {

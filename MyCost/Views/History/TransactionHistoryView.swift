@@ -218,17 +218,23 @@ struct TransactionHistoryView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Category") { isShowingCategoryPicker = true }
-                        .disabled(selectedIDs.isEmpty)
-                        .accessibilityIdentifier("history.batchCategory")
+                    Button { isShowingCategoryPicker = true } label: {
+                        Label("Category", systemImage: "folder")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                    .accessibilityIdentifier("history.batchCategory")
                     Spacer()
-                    Button("Tag") { isShowingTagPicker = true }
-                        .disabled(selectedIDs.isEmpty)
-                        .accessibilityIdentifier("history.batchTag")
+                    Button { isShowingTagPicker = true } label: {
+                        Label("Tag", systemImage: "tag")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                    .accessibilityIdentifier("history.batchTag")
                     Spacer()
-                    Button("Delete", role: .destructive) { isShowingBatchDeleteConfirmation = true }
-                        .disabled(selectedIDs.isEmpty)
-                        .accessibilityIdentifier("history.batchDelete")
+                    Button(role: .destructive) { isShowingBatchDeleteConfirmation = true } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                    .accessibilityIdentifier("history.batchDelete")
                 }
             }
         }

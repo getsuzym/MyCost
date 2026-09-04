@@ -46,17 +46,20 @@ final class MyCostUITests: XCTestCase {
 
     // MARK: - Navigation structure
 
-    func testBottomNavigationExposesDashboardRecurringCategoriesRules() {
+    func testBottomNavigationExposesDashboardRecurringMore() {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 5))
 
+        // Three tabs: the two daily-use screens, plus More for everything
+        // configured occasionally rather than checked in on.
         XCTAssertTrue(tabBar.buttons["Dashboard"].exists)
         XCTAssertTrue(tabBar.buttons["Recurring"].exists)
-        XCTAssertTrue(tabBar.buttons["Categories"].exists)
-        XCTAssertTrue(tabBar.buttons["Rules"].exists)
         XCTAssertTrue(tabBar.buttons["More"].exists)
 
-        // Transactions no longer has its own tab; Import/Review never did.
+        // Categories and Rules moved into More; Transactions never had its own
+        // tab; Import/Review never did either.
+        XCTAssertFalse(tabBar.buttons["Categories"].exists)
+        XCTAssertFalse(tabBar.buttons["Rules"].exists)
         XCTAssertFalse(tabBar.buttons["Transactions"].exists)
         XCTAssertFalse(tabBar.buttons["Import"].exists)
         XCTAssertFalse(tabBar.buttons["Review"].exists)
@@ -71,11 +74,15 @@ final class MyCostUITests: XCTestCase {
         XCTAssertFalse(app.buttons["app.reviewBanner"].exists)
     }
 
-    func testCategoriesAndRulesTabsOpenTheirScreens() {
-        app.tabBars.buttons["Categories"].tap()
-        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+    func testCategoriesAndRulesOpenFromMore() {
+        app.tabBars.buttons["More"].tap()
+        XCTAssertTrue(app.buttons["more.categories"].waitForExistence(timeout: 5))
 
-        app.tabBars.buttons["Rules"].tap()
+        app.buttons["more.categories"].tap()
+        XCTAssertTrue(app.navigationBars["Categories"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap() // back
+
+        app.buttons["more.rules"].tap()
         XCTAssertTrue(app.navigationBars["Merchant Rules"].waitForExistence(timeout: 5))
     }
 

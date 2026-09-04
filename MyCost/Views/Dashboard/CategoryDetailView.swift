@@ -212,7 +212,7 @@ private struct CategoryTransactionRow: View {
                 if item.isPartial { badge("Split", .purple) }
                 if transaction.isRecurring { badge("Recurring", .blue) }
                 if transaction.isExcluded { badge("Excluded", .secondary) }
-                if !transaction.countsAsSpending { badge("Not spending", .secondary) }
+                if !transaction.countsAsSpending { badge("Not counted", .secondary) }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
