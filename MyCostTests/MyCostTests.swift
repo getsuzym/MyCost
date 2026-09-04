@@ -15,7 +15,8 @@ final class MyCostTests: XCTestCase {
             MerchantRule.self,
             RecurringPayment.self,
             Account.self,
-            Budget.self
+            Budget.self,
+            Tag.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         container = try ModelContainer(for: schema, configurations: [configuration])
@@ -3401,6 +3402,119 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(restored.category?.name, "Dining")   // re-linked
         XCTAssertEqual(restored.recurringPayment?.id, seriesID)
         XCTAssertEqual(try context.fetch(FetchDescriptor<MyCost.Category>()).map(\.name).sorted(), ["Dining"])
+    }
+
+    // MARK: - Tags
+
+    func testTagServiceUpsertReusesTagByCaseInsensitiveName() throws {
+        let service = TagService()
+        let first = try XCTUnwrap(service.upsert(name: "Travel", in: [], modelContext: context))
+        try context.save()
+
+        let all = try context.fetch(FetchDescriptor<Tag>())
+        let again = service.upsert(name: "  travel ", in: all, modelContext: context)
+        XCTAssertEqual(again?.id, first.id)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Tag>()).count, 1)
+    }
+
+    func testTagServiceSetTagsReconcilesToExactSet() throws {
+        let service = TagService()
+        let a = Tag(name: "a"); let b = Tag(name: "b"); let c = Tag(name: "c")
+        [a, b, c].forEach(context.insert)
+        let t = insertTransaction("Shop", amount: 10, on: date(2026, 8, 1))
+        service.attach(a, to: t)
+        service.attach(b, to: t)
+
+        service.setTags([b.id, c.id], on: t, allTags: [a, b, c])
+        XCTAssertEqual(Set(t.tags.map(\.name)), ["b", "c"])
+    }
+
+    func testTagServiceDeleteDetachesButKeepsTransactions() throws {
+        let service = TagService()
+        let tag = Tag(name: "Reimbursable")
+        context.insert(tag)
+        let t = insertTransaction("Hotel", amount: 200, on: date(2026, 8, 1))
+        service.attach(tag, to: t)
+        try context.save()
+
+        service.delete(tag, modelContext: context)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Tag>()).count, 0)
+        let transactions = try allTransactions()
+        XCTAssertEqual(transactions.count, 1)
+        XCTAssertTrue(transactions.first?.tags.isEmpty ?? false)
+    }
+
+    func testBackupRoundTripsTagsAndRestoreRelinksThem() throws {
+        let service = TagService()
+        let travel = try XCTUnwrap(service.upsert(name: "Travel", in: [], modelContext: context))
+        let work = try XCTUnwrap(service.upsert(name: "Work", in: [travel], modelContext: context))
+        let t = insertTransaction("Flight", amount: 350, on: date(2026, 8, 3))
+        t.tags = [travel, work]
+        try context.save()
+
+        let portability = DataPortabilityService()
+        let backup = portability.makeBackup(
+            transactions: try allTransactions(),
+            categories: [], accounts: [], merchantRules: [], recurringPayments: [], budgets: [],
+            tags: try context.fetch(FetchDescriptor<Tag>())
+        )
+        let decoded = try portability.decode(try portability.encode(backup))
+        XCTAssertEqual(Set((decoded.tags ?? []).map(\.name)), ["Travel", "Work"])
+        XCTAssertEqual(Set(decoded.transactions.first?.tagIDs ?? []), Set([travel.id, work.id]))
+
+        // Restore into a fresh store (the real scenario — a new install / device).
+        let freshContainer = try ModelContainer(
+            for: Schema([Transaction.self, MyCost.Category.self, MerchantRule.self,
+                         RecurringPayment.self, Account.self, Budget.self, Tag.self]),
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+        )
+        let freshContext = ModelContext(freshContainer)
+        let summary = try portability.restore(decoded, into: freshContext)
+        XCTAssertEqual(summary.tags, 2)
+        let restored = try XCTUnwrap(try freshContext.fetch(FetchDescriptor<Transaction>()).first)
+        XCTAssertEqual(Set(restored.tags.map(\.name)), ["Travel", "Work"])
+    }
+
+    func testPreTagBackupJSONStillDecodes() throws {
+        // A backup written before tags existed has no `tags` / `tagIDs` keys.
+        let json = """
+        {
+          "version": 1,
+          "exportedAt": "2026-01-01T00:00:00Z",
+          "categories": [],
+          "accounts": [],
+          "merchantRules": [],
+          "recurringPayments": [],
+          "budgets": [],
+          "transactions": [
+            {
+              "id": "\(UUID().uuidString)", "accountName": "Default", "merchantName": "Old",
+              "originalDescription": "Old", "amount": 10, "transactionDate": "2026-01-01T00:00:00Z",
+              "statusRawValue": "posted", "isExcluded": false, "excludedReason": "",
+              "isRecurring": false, "isIncome": false, "duplicateStateRawValue": "unique", "note": "",
+              "normalizedAmount": 10, "transactionDirectionRawValue": "debit", "accountTypeRawValue": "other",
+              "countsAsSpending": true, "needsDirectionReview": false, "spendingCountOverridden": false
+            }
+          ]
+        }
+        """
+        let decoded = try DataPortabilityService().decode(Data(json.utf8))
+        XCTAssertNil(decoded.tags)
+        XCTAssertEqual(decoded.transactions.first?.tagIDs ?? [], [])
+    }
+
+    func testCSVIncludesTagColumn() throws {
+        let tag = Tag(name: "Split")
+        context.insert(tag)
+        let t = insertTransaction("Costco", amount: 120, on: date(2026, 8, 3))
+        t.tags = [tag]
+        try context.save()
+
+        let csv = DataPortabilityService().transactionsCSV(try allTransactions())
+        let lines = csv.components(separatedBy: "\r\n")
+        XCTAssertTrue(lines[0].contains("Tags"))
+        XCTAssertTrue(lines[1].contains("Split"))
     }
 
     // MARK: - Category drill-down

@@ -35,6 +35,13 @@ struct TransactionDetailView: View {
                 }
             }
 
+            if !transaction.tags.isEmpty {
+                Section("Tags") {
+                    Text(transaction.tags.alphabetizedByName().map(\.name).joined(separator: ", "))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !transaction.note.isEmpty {
                 Section("Note") {
                     Text(transaction.note)

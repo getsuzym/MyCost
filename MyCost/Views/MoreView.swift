@@ -36,6 +36,13 @@ struct MoreView: View {
                 .accessibilityIdentifier("more.budgets")
 
                 NavigationLink {
+                    TagManagementView()
+                } label: {
+                    Label("Tags", systemImage: "tag")
+                }
+                .accessibilityIdentifier("more.tags")
+
+                NavigationLink {
                     AccountsView()
                 } label: {
                     Label("Accounts", systemImage: "creditcard")

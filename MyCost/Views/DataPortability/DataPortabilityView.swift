@@ -11,6 +11,7 @@ struct DataPortabilityView: View {
     @Query private var merchantRules: [MerchantRule]
     @Query private var recurringPayments: [RecurringPayment]
     @Query private var budgets: [Budget]
+    @Query private var tags: [Tag]
 
     @State private var share: ShareURL?
     @State private var isImporting = false
@@ -104,7 +105,7 @@ struct DataPortabilityView: View {
     private func exportBackup() {
         let backup = service.makeBackup(
             transactions: transactions, categories: categories, accounts: accounts,
-            merchantRules: merchantRules, recurringPayments: recurringPayments, budgets: budgets
+            merchantRules: merchantRules, recurringPayments: recurringPayments, budgets: budgets, tags: tags
         )
         do {
             writeTemp(try service.encode(backup), name: "MyCost-backup-\(timestamp).json")

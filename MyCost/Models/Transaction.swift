@@ -203,6 +203,9 @@ final class Transaction {
 
     var category: Category?
     var recurringPayment: RecurringPayment?
+    /// Free-form labels, orthogonal to `category`. Many-to-many; `Tag` owns the
+    /// inverse. Defaulted so it's a lightweight migration on existing stores.
+    @Relationship(deleteRule: .nullify) var tags: [Tag] = []
 
     init(
         id: UUID = UUID(),

@@ -10,7 +10,7 @@ struct DataPortabilityService {
     /// One row per transaction, newest first, RFC-4180 quoted.
     func transactionsCSV(_ transactions: [Transaction]) -> String {
         let header = ["Date", "Merchant", "Original description", "Account", "Category",
-                      "Amount", "Type", "Recurring", "Excluded", "Note"]
+                      "Amount", "Type", "Recurring", "Excluded", "Tags", "Note"]
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withFullDate]
 
@@ -27,6 +27,7 @@ struct DataPortabilityService {
                     t.isIncome ? "Income" : "Spending",
                     t.isRecurring ? "Yes" : "No",
                     t.isExcluded ? "Yes" : "No",
+                    t.tags.map(\.name).sorted().joined(separator: "; "),
                     t.note
                 ].map(Self.csvField).joined(separator: ",")
             }
@@ -48,8 +49,16 @@ struct DataPortabilityService {
         var merchantRules: [MerchantRuleDTO] = []
         var recurringPayments: [RecurringPaymentDTO] = []
         var budgets: [BudgetDTO] = []
+        /// Optional (not just defaulted) so a backup made before tags existed —
+        /// with no "tags" key at all — still decodes. Swift's synthesized
+        /// `Decodable` only auto-fills a *missing key* for `Optional` properties;
+        /// a plain `= []` default is never consulted, so a non-optional array
+        /// here would throw `keyNotFound` on old backups instead of defaulting.
+        var tags: [TagDTO]?
         var transactions: [TransactionDTO] = []
     }
+
+    struct TagDTO: Codable { var id: UUID; var name: String; var colorHex: String? }
 
     struct CategoryDTO: Codable {
         var id: UUID; var name: String; var colorHex: String; var symbolName: String
@@ -76,11 +85,14 @@ struct DataPortabilityService {
         var normalizedAmount: Decimal; var transactionDirectionRawValue: String; var accountTypeRawValue: String
         var countsAsSpending: Bool; var needsDirectionReview: Bool; var spendingCountOverridden: Bool
         var categoryID: UUID?; var recurringPaymentID: UUID?
+        /// Optional, not defaulted — see the comment on `Backup.tags`.
+        var tagIDs: [UUID]?
     }
 
     func makeBackup(
         transactions: [Transaction], categories: [Category], accounts: [Account],
-        merchantRules: [MerchantRule], recurringPayments: [RecurringPayment], budgets: [Budget]
+        merchantRules: [MerchantRule], recurringPayments: [RecurringPayment], budgets: [Budget],
+        tags: [Tag] = []
     ) -> Backup {
         var backup = Backup()
         backup.categories = categories.map {
@@ -102,6 +114,7 @@ struct DataPortabilityService {
                                nextExpectedDate: $0.nextExpectedDate, isActive: $0.isActive, categoryID: $0.category?.id)
         }
         backup.budgets = budgets.map { BudgetDTO(id: $0.id, categoryName: $0.categoryName, monthlyLimit: $0.monthlyLimit) }
+        backup.tags = tags.map { TagDTO(id: $0.id, name: $0.name, colorHex: $0.colorHex) }
         backup.transactions = transactions.map {
             TransactionDTO(id: $0.id, accountName: $0.accountName, merchantName: $0.merchantName,
                           originalDescription: $0.originalDescription, amount: $0.amount, transactionDate: $0.transactionDate,
@@ -111,7 +124,8 @@ struct DataPortabilityService {
                           normalizedAmount: $0.normalizedAmount, transactionDirectionRawValue: $0.transactionDirectionRawValue,
                           accountTypeRawValue: $0.accountTypeRawValue, countsAsSpending: $0.countsAsSpending,
                           needsDirectionReview: $0.needsDirectionReview, spendingCountOverridden: $0.spendingCountOverridden,
-                          categoryID: $0.category?.id, recurringPaymentID: $0.recurringPayment?.id)
+                          categoryID: $0.category?.id, recurringPaymentID: $0.recurringPayment?.id,
+                          tagIDs: $0.tags.map(\.id))
         }
         return backup
     }
@@ -129,7 +143,7 @@ struct DataPortabilityService {
         return try decoder.decode(Backup.self, from: data)
     }
 
-    struct RestoreSummary { var transactions = 0; var categories = 0; var rules = 0; var recurring = 0; var accounts = 0; var budgets = 0 }
+    struct RestoreSummary { var transactions = 0; var categories = 0; var rules = 0; var recurring = 0; var accounts = 0; var budgets = 0; var tags = 0 }
 
     /// **Replaces everything** in `modelContext` with the backup's contents.
     @MainActor
@@ -141,6 +155,7 @@ struct DataPortabilityService {
         try modelContext.delete(model: Budget.self)
         try modelContext.delete(model: Account.self)
         try modelContext.delete(model: Category.self)
+        try modelContext.delete(model: Tag.self)
 
         var categoriesByID: [UUID: Category] = [:]
         for dto in backup.categories {
@@ -179,6 +194,12 @@ struct DataPortabilityService {
         for dto in backup.budgets {
             modelContext.insert(Budget(id: dto.id, categoryName: dto.categoryName, monthlyLimit: dto.monthlyLimit))
         }
+        var tagsByID: [UUID: Tag] = [:]
+        for dto in backup.tags ?? [] {
+            let tag = Tag(id: dto.id, name: dto.name, colorHex: dto.colorHex)
+            modelContext.insert(tag)
+            tagsByID[dto.id] = tag
+        }
         for dto in backup.transactions {
             let transaction = Transaction(
                 id: dto.id, accountName: dto.accountName, merchantName: dto.merchantName,
@@ -196,11 +217,14 @@ struct DataPortabilityService {
                 recurringPayment: dto.recurringPaymentID.flatMap { recurringByID[$0] }
             )
             modelContext.insert(transaction)
+            let dtoTags = (dto.tagIDs ?? []).compactMap { tagsByID[$0] }
+            if !dtoTags.isEmpty { transaction.tags = dtoTags }
         }
 
         try modelContext.save()
         return RestoreSummary(transactions: backup.transactions.count, categories: backup.categories.count,
                               rules: backup.merchantRules.count, recurring: backup.recurringPayments.count,
-                              accounts: backup.accounts.count, budgets: backup.budgets.count)
+                              accounts: backup.accounts.count, budgets: backup.budgets.count,
+                              tags: backup.tags?.count ?? 0)
     }
 }

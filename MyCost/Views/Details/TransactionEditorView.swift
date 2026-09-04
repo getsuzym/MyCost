@@ -15,6 +15,7 @@ struct TransactionEditorView: View {
     @Query(sort: \MerchantRule.updatedAt, order: .reverse) private var merchantRules: [MerchantRule]
     @Query(sort: \Account.name) private var accounts: [Account]
     @Query private var recurringPayments: [RecurringPayment]
+    @Query private var allTags: [Tag]
 
     let mode: TransactionEditorMode
     /// For `.add`: the date the new transaction should start on (e.g. the month
@@ -41,6 +42,8 @@ struct TransactionEditorView: View {
     @State private var weekday = 2
     @State private var markFutureRecurring = false
     @State private var note = ""
+    @State private var selectedTagIDs: Set<UUID> = []
+    @State private var newTagName = ""
     @State private var countsAsSpending = true
     /// Suppresses the "sign is unusual" hint for an existing row.
     @State private var directionIsUserSet = false
@@ -55,6 +58,7 @@ struct TransactionEditorView: View {
 
     private let duplicateMatchingService = DuplicateMatchingService()
     private let merchantRuleService = MerchantRuleService()
+    private let tagService = TagService()
     private let accountService = AccountService()
     private let normalizer = TransactionNormalizer()
 
@@ -153,6 +157,38 @@ struct TransactionEditorView: View {
                     }
                 }
                 .accessibilityIdentifier("transactionEditor.category")
+            }
+
+            Section {
+                ForEach(allTags.alphabetizedByName()) { tag in
+                    Button {
+                        if selectedTagIDs.contains(tag.id) { selectedTagIDs.remove(tag.id) }
+                        else { selectedTagIDs.insert(tag.id) }
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedTagIDs.contains(tag.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedTagIDs.contains(tag.id) ? Theme.accent : .secondary)
+                            Text(tag.name)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("transactionEditor.tag")
+                }
+
+                HStack {
+                    TextField("New tag", text: $newTagName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit(addTypedTag)
+                        .accessibilityIdentifier("transactionEditor.newTag")
+                    Button("Add", action: addTypedTag)
+                        .disabled(newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Tags")
+            } footer: {
+                Text("Free-form labels, separate from the category. A transaction can have any number.")
             }
 
             Section {
@@ -359,6 +395,26 @@ struct TransactionEditorView: View {
         }
     }
 
+    /// Create-or-reuse a tag from the text field and select it. The `@Query`
+    /// won't see a just-inserted tag this cycle, so select by the returned id.
+    private func addTypedTag() {
+        let name = newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if let tag = tagService.upsert(name: name, in: allTags, modelContext: modelContext) {
+            selectedTagIDs.insert(tag.id)
+        }
+        newTagName = ""
+    }
+
+    private func applyTags(to transaction: Transaction) {
+        // `@Query allTags` won't include a tag just created via addTypedTag, so
+        // merge in a fresh fetch before reconciling.
+        let extra = (try? modelContext.fetch(FetchDescriptor<Tag>())) ?? []
+        var byID = Dictionary(allTags.map { ($0.id, $0) }) { current, _ in current }
+        for tag in extra where byID[tag.id] == nil { byID[tag.id] = tag }
+        tagService.setTags(selectedTagIDs, on: transaction, allTags: Array(byID.values))
+    }
+
     private func loadInitialValues() {
         guard case .edit(let transaction) = mode else {
             if let initialDate { transactionDate = initialDate }
@@ -392,6 +448,7 @@ struct TransactionEditorView: View {
             return (1...7).contains(stored) ? stored : 2
         }()
         note = transaction.note
+        selectedTagIDs = Set(transaction.tags.map(\.id))
         countsAsSpending = transaction.countsAsSpending
         // Treat an existing row's stored choice as user-set so we don't nag.
         directionIsUserSet = true
@@ -499,6 +556,7 @@ struct TransactionEditorView: View {
             transaction.isRecurring = isRecurring
             transaction.note = note
             transaction.updatedAt = .now
+            applyTags(to: transaction)
             applyDirection(to: transaction)
             updateRecurringPayment(
                 for: transaction,
@@ -567,6 +625,7 @@ struct TransactionEditorView: View {
             transaction.category = categories.first { $0.id == pendingManualDraft.selectedCategoryID }
             transaction.duplicateState = .unique
             transaction.updatedAt = .now
+            applyTags(to: transaction)
             applyDirection(to: transaction)
             saveAndDismiss()
             return
@@ -597,6 +656,7 @@ struct TransactionEditorView: View {
             category: selectedCategory
         )
         modelContext.insert(transaction)
+        applyTags(to: transaction)
         applyDirection(to: transaction)
         updateRecurringPayment(
             for: transaction,

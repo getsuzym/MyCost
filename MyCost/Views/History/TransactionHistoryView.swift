@@ -5,10 +5,12 @@ struct TransactionHistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @Query private var allTags: [Tag]
 
     @State private var isAddingTransaction = false
     @State private var categoryFilter: CategoryFilter = .all
     @State private var recurringFilter: RecurringFilter = .all
+    @State private var tagFilter: TagFilter = .all
     @State private var searchText = ""
     /// Defaults to the current month; the user can step months or switch to All.
     @State private var scopeIsMonth = true
@@ -20,6 +22,11 @@ struct TransactionHistoryView: View {
         case all
         case uncategorized
         case category(UUID)
+    }
+
+    private enum TagFilter: Hashable {
+        case all
+        case tag(UUID)
     }
 
     private var isCurrentMonth: Bool {
@@ -42,14 +49,23 @@ struct TransactionHistoryView: View {
         }
         let byRecurring = byCategory.filter { recurringFilter.includes($0) }
 
+        let byTag: [Transaction]
+        switch tagFilter {
+        case .all:
+            byTag = byRecurring
+        case .tag(let id):
+            byTag = byRecurring.filter { $0.tags.contains { $0.id == id } }
+        }
+
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return byRecurring }
-        return byRecurring.filter { transaction in
+        guard !query.isEmpty else { return byTag }
+        return byTag.filter { transaction in
             transaction.merchantName.localizedCaseInsensitiveContains(query)
                 || transaction.originalDescription.localizedCaseInsensitiveContains(query)
                 || transaction.note.localizedCaseInsensitiveContains(query)
                 || transaction.accountName.localizedCaseInsensitiveContains(query)
                 || (transaction.category?.name.localizedCaseInsensitiveContains(query) ?? false)
+                || transaction.tags.contains { $0.name.localizedCaseInsensitiveContains(query) }
                 || NSDecimalNumber(decimal: transaction.amount).stringValue.contains(query)
         }
     }
@@ -109,6 +125,16 @@ struct TransactionHistoryView: View {
                         }
                     }
                     .accessibilityIdentifier("history.categoryFilter")
+                }
+
+                if !allTags.isEmpty {
+                    Picker("Tag", selection: $tagFilter) {
+                        Text("All").tag(TagFilter.all)
+                        ForEach(allTags.alphabetizedByName()) { tag in
+                            Text(tag.name).tag(TagFilter.tag(tag.id))
+                        }
+                    }
+                    .accessibilityIdentifier("history.tagFilter")
                 }
             }
 
