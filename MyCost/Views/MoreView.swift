@@ -41,6 +41,13 @@ struct MoreView: View {
                     Label("Accounts", systemImage: "creditcard")
                 }
                 .accessibilityIdentifier("more.accounts")
+
+                NavigationLink {
+                    DataPortabilityView()
+                } label: {
+                    Label("Export & Backup", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("more.data")
             }
         }
         .navigationTitle("More")

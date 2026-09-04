@@ -3274,6 +3274,88 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(budget.categoryName, "Eating Out")
     }
 
+    // MARK: - Export & backup
+
+    func testTransactionsCSVHasHeaderRowAndQuotesTrickyFields() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let a = insertTransaction("Bistro, The", amount: 25, on: date(2026, 8, 3), category: dining)
+        a.note = "said \"great\""
+        _ = insertTransaction("Cafe", amount: 5, on: date(2026, 8, 1))
+        try context.save()
+
+        let csv = DataPortabilityService().transactionsCSV(try allTransactions())
+        let lines = csv.components(separatedBy: "\r\n")
+        XCTAssertEqual(lines.count, 3)                       // header + 2 rows
+        XCTAssertTrue(lines[0].hasPrefix("Date,Merchant,"))
+        XCTAssertTrue(csv.contains("\"Bistro, The\""))       // comma → quoted
+        XCTAssertTrue(csv.contains("\"said \"\"great\"\"\"")) // quote → doubled + wrapped
+    }
+
+    func testBackupRoundTripsThroughJSON() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let series = RecurringPayment(merchantName: "Netflix", expectedAmount: 20, frequency: .monthly)
+        context.insert(series)
+        let t = insertTransaction("Bistro", amount: 40, on: date(2026, 8, 3), category: dining)
+        t.isIncome = false
+        t.recurringPayment = series
+        context.insert(Budget(categoryName: "Dining", monthlyLimit: 200))
+        try context.save()
+
+        let service = DataPortabilityService()
+        let backup = service.makeBackup(
+            transactions: try allTransactions(),
+            categories: try context.fetch(FetchDescriptor<MyCost.Category>()),
+            accounts: [],
+            merchantRules: [],
+            recurringPayments: try context.fetch(FetchDescriptor<RecurringPayment>()),
+            budgets: try context.fetch(FetchDescriptor<Budget>())
+        )
+        let decoded = try service.decode(try service.encode(backup))
+
+        XCTAssertEqual(decoded.transactions.count, 1)
+        XCTAssertEqual(decoded.transactions.first?.merchantName, "Bistro")
+        XCTAssertEqual(decoded.transactions.first?.categoryID, dining.id)
+        XCTAssertEqual(decoded.transactions.first?.recurringPaymentID, series.id)
+        XCTAssertEqual(decoded.budgets.first?.monthlyLimit, 200)
+    }
+
+    func testRestoreReplacesEverythingAndReLinksRelationships() throws {
+        // Existing data that restore must clear.
+        _ = makeCategory("Junk", sortOrder: 0)
+        _ = insertTransaction("Old thing", amount: 999, on: date(2026, 1, 1))
+        try context.save()
+
+        let service = DataPortabilityService()
+        var backup = DataPortabilityService.Backup()
+        let catID = UUID()
+        let seriesID = UUID()
+        backup.categories = [.init(id: catID, name: "Dining", colorHex: "#E76F51", symbolName: "fork.knife",
+                                   sortOrder: 0, isActive: true, isFallback: false)]
+        backup.recurringPayments = [.init(id: seriesID, accountName: "Default", merchantName: "Netflix",
+                                          expectedAmount: 20, frequencyRawValue: "monthly", customIntervalDays: 30,
+                                          monthInterval: 1, weekdayOrdinal: 1, weekday: 2, nextExpectedDate: nil,
+                                          isActive: true, categoryID: catID)]
+        backup.budgets = [.init(id: UUID(), categoryName: "Dining", monthlyLimit: 300)]
+        backup.transactions = [.init(id: UUID(), accountName: "Default", merchantName: "Bistro", originalDescription: "Bistro",
+                                     amount: 55, transactionDate: date(2026, 8, 3), postedDate: nil, statusRawValue: "posted",
+                                     isExcluded: false, excludedReason: "", isRecurring: true, isIncome: false,
+                                     duplicateStateRawValue: "unique", note: "", normalizedAmount: 55,
+                                     transactionDirectionRawValue: "debit", accountTypeRawValue: "other",
+                                     countsAsSpending: true, needsDirectionReview: false, spendingCountOverridden: false,
+                                     categoryID: catID, recurringPaymentID: seriesID)]
+
+        let summary = try service.restore(backup, into: context)
+        XCTAssertEqual(summary.transactions, 1)
+
+        let transactions = try allTransactions()
+        XCTAssertEqual(transactions.count, 1)               // "Old thing" gone
+        let restored = try XCTUnwrap(transactions.first)
+        XCTAssertEqual(restored.merchantName, "Bistro")
+        XCTAssertEqual(restored.category?.name, "Dining")   // re-linked
+        XCTAssertEqual(restored.recurringPayment?.id, seriesID)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MyCost.Category>()).map(\.name).sorted(), ["Dining"])
+    }
+
     // MARK: - Category drill-down
 
     /// Mirrors CategoryDetailView's filter: month window + category name.

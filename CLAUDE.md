@@ -155,6 +155,10 @@ It never blindly flips a sign that already matches the account convention. Cues 
 
 Synchronous, offline, three outcomes in strict priority: **1.** user `MerchantRule` → `.ruleMatch`. **2.** `LocalMerchantCategorizer` (offline keyword table; only applies if the mapped category name exists) → `.localMatch`. **3.** `.unresolved` → caller leaves it Uncategorized for manual categorization. No network, no AI. `ReviewTransactionsView`'s per-row "Suggest category" and `TransactionEditorView` use it; nothing is applied without the match being a concrete rule/local hit.
 
+### Export & backup — `DataPortabilityService`
+
+All local, no network. `transactionsCSV(_:)` → an RFC-4180 CSV (date / merchant / description / account / category / amount / type / recurring / excluded / note). `makeBackup(…)` → a `Backup` Codable snapshot of every model as flat DTOs (enums as raw strings, relationships as ids); `encode` / `decode` are ISO-8601 JSON. `restore(_:into:)` **replaces everything** — `modelContext.delete(model:)` per type, then re-inserts and re-links `Transaction.category` / `.recurringPayment` and rule / series / budget categories by id. Surfaced at **More → Export & Backup** (`DataPortabilityView`): two `ShareLink`-style exports via a temp file + `UIActivityViewController`, and a `.fileImporter` restore behind a "replace everything" confirmation.
+
 ### Budgets — `Budget` + `BudgetService`
 
 `Budget` (`@Model`; `categoryName: String?` — `nil` = overall month, else a category name matched the same way `SpendingAnalytics` groups; `monthlyLimit`). `BudgetService.progress(for:in:)` turns budgets + a `MonthlySpendingSummary` into `[BudgetProgress]` (`limit` / `spent` / `remaining` / `isOver` / `fraction`), overall first then by spend. `upsert(categoryName:monthlyLimit:…)` is one-per-scope; `renameCategory(from:to:in:)` keeps a category budget attached across a rename (wired into `CategoryService.updateCategory`). Managed under **More → Budgets** (`BudgetsView` — month navigator + progress rows + add/edit/delete); the Dashboard shows a "Budget" section (top 4 progress rows, or a "Set a monthly budget" link).

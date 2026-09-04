@@ -55,6 +55,7 @@
 		000000000000000000000911 /* Budget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000912 /* Budget.swift */; };
 		000000000000000000000133 /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000034 /* AccountService.swift */; };
 		000000000000000000000913 /* BudgetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000914 /* BudgetService.swift */; };
+		000000000000000000000917 /* DataPortabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000918 /* DataPortabilityService.swift */; };
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
 		00000000000000000000090B /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000090C /* AppLog.swift */; };
@@ -65,6 +66,7 @@
 		000000000000000000000135 /* BankLayoutProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000036 /* BankLayoutProfile.swift */; };
 		000000000000000000000136 /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000037 /* AccountsView.swift */; };
 		000000000000000000000915 /* BudgetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000916 /* BudgetsView.swift */; };
+		000000000000000000000919 /* DataPortabilityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000091A /* DataPortabilityView.swift */; };
 		000000000000000000000137 /* CategoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000038 /* CategoryDetailView.swift */; };
 		000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000039 /* MerchantRuleEditorView.swift */; };
 		000000000000000000000139 /* MonthTransactionsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003A /* MonthTransactionsListView.swift */; };
@@ -125,6 +127,7 @@
 		000000000000000000000912 /* Budget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budget.swift; sourceTree = "<group>"; };
 		000000000000000000000034 /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
 		000000000000000000000914 /* BudgetService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetService.swift; sourceTree = "<group>"; };
+		000000000000000000000918 /* DataPortabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataPortabilityService.swift; sourceTree = "<group>"; };
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
 		00000000000000000000090C /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
@@ -134,6 +137,7 @@
 		000000000000000000000036 /* BankLayoutProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankLayoutProfile.swift; sourceTree = "<group>"; };
 		000000000000000000000037 /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Accounts/AccountsView.swift; sourceTree = "<group>"; };
 		000000000000000000000916 /* BudgetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budgets/BudgetsView.swift; sourceTree = "<group>"; };
+		00000000000000000000091A /* DataPortabilityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataPortability/DataPortabilityView.swift; sourceTree = "<group>"; };
 		000000000000000000000038 /* CategoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetailView.swift; sourceTree = "<group>"; };
 		000000000000000000000039 /* MerchantRuleEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MerchantRuleEditorView.swift; sourceTree = "<group>"; };
 		00000000000000000000003A /* MonthTransactionsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthTransactionsListView.swift; sourceTree = "<group>"; };
@@ -260,6 +264,7 @@
 				00000000000000000000001A /* RecurringPaymentSuggestionService.swift */,
 				000000000000000000000034 /* AccountService.swift */,
 				000000000000000000000914 /* BudgetService.swift */,
+				000000000000000000000918 /* DataPortabilityService.swift */,
 				000000000000000000000902 /* RecurrenceSchedule.swift */,
 				000000000000000000000906 /* RecurringPaymentService.swift */,
 				00000000000000000000090C /* AppLog.swift */,
@@ -287,6 +292,7 @@
 				00000000000000000000030C /* Components */,
 				000000000000000000000037 /* AccountsView.swift */,
 				000000000000000000000916 /* BudgetsView.swift */,
+				00000000000000000000091A /* DataPortabilityView.swift */,
 				00000000000000000000030D /* Shared */,
 			);
 			path = Views;
@@ -524,6 +530,7 @@
 				000000000000000000000911 /* Budget.swift in Sources */,
 				000000000000000000000133 /* AccountService.swift in Sources */,
 				000000000000000000000913 /* BudgetService.swift in Sources */,
+				000000000000000000000917 /* DataPortabilityService.swift in Sources */,
 				000000000000000000000901 /* RecurrenceSchedule.swift in Sources */,
 				000000000000000000000905 /* RecurringPaymentService.swift in Sources */,
 				00000000000000000000090B /* AppLog.swift in Sources */,
@@ -532,6 +539,7 @@
 				000000000000000000000135 /* BankLayoutProfile.swift in Sources */,
 				000000000000000000000136 /* AccountsView.swift in Sources */,
 				000000000000000000000915 /* BudgetsView.swift in Sources */,
+				000000000000000000000919 /* DataPortabilityView.swift in Sources */,
 				000000000000000000000137 /* CategoryDetailView.swift in Sources */,
 				000000000000000000000138 /* MerchantRuleEditorView.swift in Sources */,
 				000000000000000000000139 /* MonthTransactionsListView.swift in Sources */,
