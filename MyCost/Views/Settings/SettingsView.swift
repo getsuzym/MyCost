@@ -8,11 +8,14 @@ struct SettingsView: View {
     @Query(sort: \RecurringPayment.merchantName) private var recurringPayments: [RecurringPayment]
 
     @AppStorage("recurring.reminderLeadDays") private var reminderLeadDays = 0
+    @AppStorage("budgets.alertsEnabled") private var budgetAlertsEnabled = false
+    @AppStorage("budgets.alertThresholdPercent") private var budgetAlertThresholdPercent = 90
     @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
     @AppStorage("mycost.lastBackupExportAt") private var lastBackupExportTimestamp: Double = 0
     @State private var showsNoPasscodeAlert = false
 
     private let reminderService = RecurringReminderService()
+    private let budgetAlertService = BudgetAlertService()
     private let lockService = AppLockService()
 
     private var lastBackupDate: Date? {
@@ -37,10 +40,28 @@ struct SettingsView: View {
                     Label("Budgets", systemImage: "chart.bar.doc.horizontal")
                 }
                 .accessibilityIdentifier("settings.budgets")
+
+                Toggle("Alert me when I'm close to a budget", isOn: Binding(
+                    get: { budgetAlertsEnabled },
+                    set: { on in
+                        budgetAlertsEnabled = on
+                        if on { requestBudgetAlertAuthorization() }
+                    }
+                ))
+                .accessibilityIdentifier("settings.budgetAlertsToggle")
+                if budgetAlertsEnabled {
+                    Stepper(
+                        "At \(budgetAlertThresholdPercent)% spent",
+                        value: $budgetAlertThresholdPercent,
+                        in: 50...100,
+                        step: 5
+                    )
+                    .accessibilityIdentifier("settings.budgetAlertThreshold")
+                }
             } header: {
                 Text("Budget")
             } footer: {
-                Text("Set a monthly spending limit, overall or per category. Progress shows on the Dashboard once you have one.")
+                Text("Set a monthly spending limit, overall or per category. Progress shows on the Dashboard once you have one. There's no background monitoring, so the alert fires the next time the app is open after a transaction pushes a budget past the threshold — not necessarily the instant it happens.")
             }
 
             Section {
@@ -108,6 +129,14 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Set a passcode for this device in Settings first.")
+        }
+    }
+
+    private func requestBudgetAlertAuthorization() {
+        Task {
+            if await budgetAlertService.requestAuthorization() == false {
+                await MainActor.run { budgetAlertsEnabled = false }
+            }
         }
     }
 

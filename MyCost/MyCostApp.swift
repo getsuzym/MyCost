@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct MyCostApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let modelContainer: ModelContainer
 
     init() {
@@ -15,7 +16,8 @@ struct MyCostApp: App {
                 Account.self,
                 Budget.self,
                 Tag.self,
-                TransactionSplit.self
+                TransactionSplit.self,
+                DeletedTransactionRecord.self
             ])
             let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)

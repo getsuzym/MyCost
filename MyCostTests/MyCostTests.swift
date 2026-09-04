@@ -17,7 +17,8 @@ final class MyCostTests: XCTestCase {
             Account.self,
             Budget.self,
             Tag.self,
-            TransactionSplit.self
+            TransactionSplit.self,
+            DeletedTransactionRecord.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         container = try ModelContainer(for: schema, configurations: [configuration])
@@ -1742,6 +1743,103 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(try allTransactions().count, 0)
     }
 
+    // MARK: - Recently Deleted
+
+    func testTrashBinArchivesDeletedTransactionsForRestore() async throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let tag = Tag(name: "Work")
+        context.insert(tag)
+        let bin = TrashBin(delay: .zero, sleep: { _ in })
+        let transaction = insertTransaction("Bistro", amount: 40, on: date(2026, 8, 3), category: dining)
+        transaction.tags = [tag]
+        try context.save()
+
+        bin.deleteTransactions([transaction], modelContext: context)
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(try allTransactions().count, 0)
+        let records = try context.fetch(FetchDescriptor<DeletedTransactionRecord>())
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.merchantName, "Bistro")
+        XCTAssertEqual(record.amount, 40)
+        XCTAssertEqual(record.categoryName, "Dining")
+        XCTAssertEqual(record.tagNames, ["Work"])
+    }
+
+    func testRecentlyDeletedServiceRestoreRelinksCategoryAndTagsByNameThenRemovesTheRecord() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let record = DeletedTransactionRecord(
+            id: UUID(), accountName: "Default", merchantName: "Bistro", originalDescription: "Bistro",
+            amount: 40, transactionDate: date(2026, 8, 3), postedDate: nil, statusRawValue: "posted",
+            isExcluded: false, excludedReason: "", isRecurring: false, isIncome: false, note: "",
+            normalizedAmount: 40, transactionDirectionRawValue: "debit", accountTypeRawValue: "other",
+            countsAsSpending: true, categoryID: dining.id, categoryName: "Dining",
+            tagNames: ["Work", "Travel"], deletedAt: date(2026, 8, 4)
+        )
+        context.insert(record)
+        try context.save()
+
+        let restored = RecentlyDeletedService().restore(record, categories: [dining], tags: [], modelContext: context)
+
+        XCTAssertEqual(restored.merchantName, "Bistro")
+        XCTAssertEqual(restored.category?.name, "Dining")
+        XCTAssertEqual(Set(restored.tags.map(\.name)), ["Work", "Travel"])
+        XCTAssertEqual(try allTransactions().count, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DeletedTransactionRecord>()).count, 0)
+    }
+
+    func testRecentlyDeletedServicePurgesOnlyExpiredRecords() throws {
+        let now = date(2026, 9, 4)
+        let fresh = DeletedTransactionRecord(
+            id: UUID(), accountName: "Default", merchantName: "Fresh", originalDescription: "Fresh",
+            amount: 10, transactionDate: now, postedDate: nil, statusRawValue: "posted",
+            isExcluded: false, excludedReason: "", isRecurring: false, isIncome: false, note: "",
+            normalizedAmount: 10, transactionDirectionRawValue: "debit", accountTypeRawValue: "other",
+            countsAsSpending: true, categoryID: nil, categoryName: nil, tagNames: [],
+            deletedAt: date(2026, 9, 1) // 3 days ago
+        )
+        let old = DeletedTransactionRecord(
+            id: UUID(), accountName: "Default", merchantName: "Old", originalDescription: "Old",
+            amount: 20, transactionDate: now, postedDate: nil, statusRawValue: "posted",
+            isExcluded: false, excludedReason: "", isRecurring: false, isIncome: false, note: "",
+            normalizedAmount: 20, transactionDirectionRawValue: "debit", accountTypeRawValue: "other",
+            countsAsSpending: true, categoryID: nil, categoryName: nil, tagNames: [],
+            deletedAt: date(2026, 7, 1) // 65 days ago
+        )
+        context.insert(fresh)
+        context.insert(old)
+        try context.save()
+
+        RecentlyDeletedService().purgeExpired([fresh, old], modelContext: context, now: now)
+
+        let remaining = try context.fetch(FetchDescriptor<DeletedTransactionRecord>())
+        XCTAssertEqual(remaining.map(\.merchantName), ["Fresh"])
+    }
+
+    func testRecentlyDeletedDaysRemainingCountsDownToZero() {
+        let now = date(2026, 9, 4)
+        let justDeleted = date(2026, 9, 4)
+        let almostExpired = date(2026, 8, 6) // 29 days ago
+        let expired = date(2026, 7, 1)
+
+        XCTAssertEqual(RecentlyDeletedService.daysRemaining(for: makeRecord(deletedAt: justDeleted), now: now), 30)
+        XCTAssertEqual(RecentlyDeletedService.daysRemaining(for: makeRecord(deletedAt: almostExpired), now: now), 1)
+        XCTAssertEqual(RecentlyDeletedService.daysRemaining(for: makeRecord(deletedAt: expired), now: now), 0)
+        XCTAssertTrue(RecentlyDeletedService.isExpired(makeRecord(deletedAt: expired), now: now))
+        XCTAssertFalse(RecentlyDeletedService.isExpired(makeRecord(deletedAt: justDeleted), now: now))
+    }
+
+    private func makeRecord(deletedAt: Date) -> DeletedTransactionRecord {
+        DeletedTransactionRecord(
+            id: UUID(), accountName: "Default", merchantName: "X", originalDescription: "X",
+            amount: 1, transactionDate: deletedAt, postedDate: nil, statusRawValue: "posted",
+            isExcluded: false, excludedReason: "", isRecurring: false, isIncome: false, note: "",
+            normalizedAmount: 1, transactionDirectionRawValue: "debit", accountTypeRawValue: "other",
+            countsAsSpending: true, categoryID: nil, categoryName: nil, tagNames: [], deletedAt: deletedAt
+        )
+    }
+
     // MARK: - Stable ForEach identity (add/delete diff-crash regression)
 
     func testCategorySpendIdentityIsStableAcrossRecomputes() {
@@ -3383,6 +3481,51 @@ final class MyCostTests: XCTestCase {
         try context.save()
         BudgetService().renameCategory(from: "Dining", to: "Eating Out", in: [budget])
         XCTAssertEqual(budget.categoryName, "Eating Out")
+    }
+
+    // MARK: - Budget alerts
+
+    @MainActor
+    func testBudgetAlertNotifiesOnceThenNotAgainForTheSameMonth() async {
+        let suiteName = "mycost.tests.budgetAlerts.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BudgetAlertService(defaults: defaults)
+        let now = date(2026, 9, 4)
+        let row = BudgetProgress(budgetID: UUID(), name: "Dining", limit: 200, spent: 190) // 95%
+
+        let firstPass = await service.checkThresholds([row], thresholdFraction: 0.9, now: now)
+        XCTAssertEqual(firstPass.map(\.name), ["Dining"])
+        XCTAssertTrue(service.notifiedKeys().contains("\(row.budgetID.uuidString)|2026-09"))
+
+        // Checked again later the same month, still over — no repeat.
+        let secondPass = await service.checkThresholds([row], thresholdFraction: 0.9, now: date(2026, 9, 20))
+        XCTAssertTrue(secondPass.isEmpty)
+    }
+
+    @MainActor
+    func testBudgetAlertNotifiesAgainNextMonth() async {
+        let suiteName = "mycost.tests.budgetAlerts.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BudgetAlertService(defaults: defaults)
+        let row = BudgetProgress(budgetID: UUID(), name: "Dining", limit: 200, spent: 190)
+
+        _ = await service.checkThresholds([row], thresholdFraction: 0.9, now: date(2026, 9, 4))
+        let nextMonth = await service.checkThresholds([row], thresholdFraction: 0.9, now: date(2026, 10, 2))
+        XCTAssertEqual(nextMonth.map(\.name), ["Dining"])
+    }
+
+    @MainActor
+    func testBudgetAlertSkipsRowsBelowThreshold() async {
+        let suiteName = "mycost.tests.budgetAlerts.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = BudgetAlertService(defaults: defaults)
+        let row = BudgetProgress(budgetID: UUID(), name: "Groceries", limit: 400, spent: 100) // 25%
+
+        let notified = await service.checkThresholds([row], thresholdFraction: 0.9, now: date(2026, 9, 4))
+        XCTAssertTrue(notified.isEmpty)
     }
 
     // MARK: - Export & backup

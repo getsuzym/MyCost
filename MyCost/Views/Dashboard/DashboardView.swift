@@ -42,9 +42,12 @@ struct DashboardView: View {
     /// stays always-visible, right under Categories.
     @AppStorage("dashboard.monthsExpanded") private var monthsExpanded = false
     @AppStorage("dashboard.categoryDetailsExpanded") private var categoryDetailsExpanded = false
+    @AppStorage("budgets.alertsEnabled") private var budgetAlertsEnabled = false
+    @AppStorage("budgets.alertThresholdPercent") private var budgetAlertThresholdPercent = 90
 
     private let analytics = SpendingAnalytics()
     private let monthly = MonthlyTransactionsService()
+    private let budgetAlertService = BudgetAlertService()
 
     private var summary: MonthlySpendingSummary {
         analytics.monthlySummary(for: monthAnchor, transactions: transactions, recurringPayments: recurringPayments)
@@ -203,6 +206,7 @@ struct DashboardView: View {
             // pull-down gesture its spinner and a fresh recompute.
             try? await Task.sleep(for: .milliseconds(400))
         }
+        .task(id: transactions.count) { checkBudgetAlerts() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -303,6 +307,19 @@ struct DashboardView: View {
         guard let moved = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
         // Never step past the current month.
         monthAnchor = moved > Date() ? Date() : moved
+    }
+
+    /// Always checks the *real* current month, regardless of which month
+    /// `monthAnchor` happens to be showing — an alert about a month the user
+    /// is just browsing historically would be meaningless.
+    private func checkBudgetAlerts() {
+        guard budgetAlertsEnabled, !budgets.isEmpty else { return }
+        let currentSummary = analytics.monthlySummary(for: .now, transactions: transactions, recurringPayments: recurringPayments)
+        let rows = BudgetService().progress(for: budgets, in: currentSummary)
+        let threshold = Double(budgetAlertThresholdPercent) / 100
+        Task {
+            await budgetAlertService.checkThresholds(rows, thresholdFraction: threshold)
+        }
     }
 }
 

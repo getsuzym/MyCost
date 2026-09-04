@@ -44,15 +44,22 @@ final class ToastCenter: ObservableObject {
     private let errorDuration: Duration
     /// Injected in tests so auto-dismiss can be asserted without real waiting.
     private let sleep: @Sendable (Duration) async -> Void
+    /// Injected in tests so unit tests never fire real UIKit feedback
+    /// generators. Every CRUD site already funnels through `show`, so this one
+    /// hook covers add/edit/delete feedback app-wide without touching each
+    /// call site individually.
+    private let haptic: @MainActor (Toast.Style) -> Void
 
     init(
         successDuration: Duration = .seconds(2.5),
         errorDuration: Duration = .seconds(5),
-        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+        haptic: @escaping @MainActor (Toast.Style) -> Void = ToastCenter.defaultHaptic
     ) {
         self.successDuration = successDuration
         self.errorDuration = errorDuration
         self.sleep = sleep
+        self.haptic = haptic
     }
 
     func success(_ message: String) { show(Toast(message: message, style: .success)) }
@@ -63,6 +70,7 @@ final class ToastCenter: ObservableObject {
         dismissTask?.cancel()
         current = toast
         announce(toast.message)
+        haptic(toast.style)
 
         // An actionable toast (e.g. "Undo") gets the longer duration regardless
         // of style, so it outlives TrashBin's grace period.
@@ -84,6 +92,17 @@ final class ToastCenter: ObservableObject {
     private func announce(_ message: String) {
         #if canImport(UIKit)
         UIAccessibility.post(notification: .announcement, argument: message)
+        #endif
+    }
+
+    @MainActor
+    static func defaultHaptic(_ style: Toast.Style) {
+        #if canImport(UIKit)
+        switch style {
+        case .success: UINotificationFeedbackGenerator().notificationOccurred(.success)
+        case .error: UINotificationFeedbackGenerator().notificationOccurred(.error)
+        case .info: break
+        }
         #endif
     }
 }

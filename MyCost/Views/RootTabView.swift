@@ -11,6 +11,8 @@ struct RootTabView: View {
     /// Starts already-locked on a cold launch when App Lock is on, so the
     /// content never flashes before the lock screen appears.
     @State private var isLocked: Bool
+    /// Set by a Home Screen quick action (long-press the app icon).
+    @State private var isShowingQuickAddTransaction = false
 
     init() {
         let enabled = UserDefaults.standard.bool(forKey: "mycost.appLockEnabled")
@@ -83,11 +85,38 @@ struct RootTabView: View {
         .fullScreenCover(isPresented: $isLocked) {
             AppLockView(isLocked: $isLocked)
         }
+        .sheet(isPresented: $isShowingQuickAddTransaction) {
+            NavigationStack { TransactionEditorView(mode: .add) }
+        }
         .onChange(of: scenePhase) { _, newPhase in
             guard appLockEnabled, !isUITesting else { return }
             if newPhase == .background {
                 isLocked = true
             }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            handlePendingShortcutIfUnlocked()
+        }
+        .onChange(of: isLocked) { _, locked in
+            guard !locked else { return }
+            handlePendingShortcutIfUnlocked()
+        }
+    }
+
+    /// A quick action tapped while the app was locked stays pending — this
+    /// fires again once `isLocked` clears, so it isn't lost, but also never
+    /// jumps straight to "Add Transaction" past the lock screen.
+    private func handlePendingShortcutIfUnlocked() {
+        guard !isLocked, !isUITesting, let type = AppDelegate.pendingShortcutType else { return }
+        AppDelegate.pendingShortcutType = nil
+        switch type {
+        case QuickAction.addTransaction:
+            isShowingQuickAddTransaction = true
+        case QuickAction.importScreenshots:
+            nav.requestImport(session: ocrReviewStore)
+        default:
+            break
         }
     }
 

@@ -63,6 +63,11 @@
 		0000000000000000000009CA /* AppLockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009CB /* AppLockView.swift */; };
 		0000000000000000000009CC /* TrashBin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009CD /* TrashBin.swift */; };
 		0000000000000000000009CE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009CF /* SettingsView.swift */; };
+		0000000000000000000009D0 /* DeletedTransactionRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009D1 /* DeletedTransactionRecord.swift */; };
+		0000000000000000000009D2 /* RecentlyDeletedService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009D3 /* RecentlyDeletedService.swift */; };
+		0000000000000000000009D4 /* RecentlyDeletedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009D5 /* RecentlyDeletedView.swift */; };
+		0000000000000000000009D6 /* BudgetAlertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009D7 /* BudgetAlertService.swift */; };
+		0000000000000000000009D8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000009D9 /* AppDelegate.swift */; };
 		000000000000000000000917 /* DataPortabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000918 /* DataPortabilityService.swift */; };
 		000000000000000000000901 /* RecurrenceSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000902 /* RecurrenceSchedule.swift */; };
 		000000000000000000000905 /* RecurringPaymentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000906 /* RecurringPaymentService.swift */; };
@@ -144,6 +149,11 @@
 		0000000000000000000009CB /* AppLockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockView.swift; sourceTree = "<group>"; };
 		0000000000000000000009CD /* TrashBin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashBin.swift; sourceTree = "<group>"; };
 		0000000000000000000009CF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings/SettingsView.swift; sourceTree = "<group>"; };
+		0000000000000000000009D1 /* DeletedTransactionRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeletedTransactionRecord.swift; sourceTree = "<group>"; };
+		0000000000000000000009D3 /* RecentlyDeletedService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyDeletedService.swift; sourceTree = "<group>"; };
+		0000000000000000000009D5 /* RecentlyDeletedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyDeleted/RecentlyDeletedView.swift; sourceTree = "<group>"; };
+		0000000000000000000009D7 /* BudgetAlertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetAlertService.swift; sourceTree = "<group>"; };
+		0000000000000000000009D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		000000000000000000000918 /* DataPortabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataPortabilityService.swift; sourceTree = "<group>"; };
 		000000000000000000000902 /* RecurrenceSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceSchedule.swift; sourceTree = "<group>"; };
 		000000000000000000000906 /* RecurringPaymentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurringPaymentService.swift; sourceTree = "<group>"; };
@@ -208,6 +218,7 @@
 			children = (
 				8A26197730479CE900C9C94A /* Info.plist */,
 				000000000000000000000001 /* MyCostApp.swift */,
+				0000000000000000000009D9 /* AppDelegate.swift */,
 				000000000000000000000910 /* Assets.xcassets */,
 				000000000000000000000304 /* Models */,
 				000000000000000000000305 /* Services */,
@@ -253,6 +264,7 @@
 				000000000000000000000912 /* Budget.swift */,
 				0000000000000000000009C1 /* Tag.swift */,
 				0000000000000000000009C7 /* TransactionSplit.swift */,
+				0000000000000000000009D1 /* DeletedTransactionRecord.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -274,6 +286,8 @@
 				000000000000000000000030 /* ToastCenter.swift */,
 				0000000000000000000009C9 /* AppLockService.swift */,
 				0000000000000000000009CD /* TrashBin.swift */,
+				0000000000000000000009D3 /* RecentlyDeletedService.swift */,
+				0000000000000000000009D7 /* BudgetAlertService.swift */,
 				000000000000000000000023 /* TransactionTextHeuristics.swift */,
 				000000000000000000000024 /* OCRTextObservation.swift */,
 				000000000000000000000025 /* TransactionRegionDetector.swift */,
@@ -320,6 +334,7 @@
 				0000000000000000000009BF /* OnboardingView.swift */,
 				0000000000000000000009C5 /* TagManagementView.swift */,
 				0000000000000000000009CF /* SettingsView.swift */,
+				0000000000000000000009D5 /* RecentlyDeletedView.swift */,
 				00000000000000000000030D /* Shared */,
 			);
 			path = Views;
@@ -545,6 +560,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000101 /* MyCostApp.swift in Sources */,
+				0000000000000000000009D8 /* AppDelegate.swift in Sources */,
 				000000000000000000000102 /* Transaction.swift in Sources */,
 				000000000000000000000103 /* Category.swift in Sources */,
 				000000000000000000000104 /* MerchantRule.swift in Sources */,
@@ -590,6 +606,10 @@
 				0000000000000000000009CA /* AppLockView.swift in Sources */,
 				0000000000000000000009CC /* TrashBin.swift in Sources */,
 				0000000000000000000009CE /* SettingsView.swift in Sources */,
+				0000000000000000000009D0 /* DeletedTransactionRecord.swift in Sources */,
+				0000000000000000000009D2 /* RecentlyDeletedService.swift in Sources */,
+				0000000000000000000009D4 /* RecentlyDeletedView.swift in Sources */,
+				0000000000000000000009D6 /* BudgetAlertService.swift in Sources */,
 				000000000000000000000130 /* ToastView.swift in Sources */,
 				00000000000000000000011F /* MerchantCategorizationCoordinator.swift in Sources */,
 				000000000000000000000122 /* TransactionTextHeuristics.swift in Sources */,

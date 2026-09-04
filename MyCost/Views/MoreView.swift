@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 /// The "More" tab — a drill-down list to the secondary management screens that
@@ -6,6 +7,7 @@ import SwiftUI
 struct MoreView: View {
     @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
     @EnvironmentObject private var nav: AppNavigationModel
+    @Query private var deletedRecords: [DeletedTransactionRecord]
 
     var body: some View {
         List {
@@ -71,6 +73,20 @@ struct MoreView: View {
                     Label("Accounts", systemImage: "creditcard")
                 }
                 .accessibilityIdentifier("more.accounts")
+
+                NavigationLink {
+                    RecentlyDeletedView()
+                } label: {
+                    HStack {
+                        Label("Recently Deleted", systemImage: "trash")
+                        if !deletedRecords.isEmpty {
+                            Spacer()
+                            Text("\(deletedRecords.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("more.recentlyDeleted")
             }
         }
         .navigationTitle("More")

@@ -4,8 +4,10 @@ import SwiftData
 /// Deferred deletion so a delete can be undone. Deleting a transaction doesn't
 /// touch SwiftData immediately: the id(s) go into `pendingDeletionIDs` (which
 /// every delete-capable transaction list filters out, so the row disappears
-/// right away) and the real `modelContext.delete` + save happens after a grace
-/// period unless `cancel(_:)` is called first from the toast's Undo action.
+/// right away) and the real archive-then-delete happens after a grace period
+/// unless `cancel(_:)` is called first from the toast's Undo action. See
+/// `deleteTransactions` for the archival step and `RecentlyDeletedService` for
+/// what happens to it afterward.
 ///
 /// UI-layer, presentation-only state — deliberately not threaded into
 /// `SpendingAnalytics` or any other pure service, so Dashboard-style totals
@@ -72,12 +74,18 @@ final class TrashBin: ObservableObject {
     /// `CategoryDetailView`, `MonthDetailView`) uses: the rows vanish
     /// immediately (`pendingDeletionIDs`, which each view's list filters on),
     /// a toast offers Undo for the grace period, and only after that
-    /// (uncancelled) does the real `modelContext.delete` + save happen.
+    /// (uncancelled) is each transaction archived to a `DeletedTransactionRecord`
+    /// (so it's still recoverable from More → Recently Deleted for 30 days)
+    /// and then actually deleted.
     func deleteTransactions(_ transactions: [Transaction], modelContext: ModelContext) {
         guard !transactions.isEmpty else { return }
         let ids = transactions.map(\.id)
         let token = scheduleDeletion(ids: ids) {
-            transactions.forEach(modelContext.delete)
+            let now = Date.now
+            for transaction in transactions {
+                modelContext.insert(DeletedTransactionRecord(archiving: transaction, deletedAt: now))
+                modelContext.delete(transaction)
+            }
             modelContext.saveOrLog("undoable delete transaction(s)")
         }
         let message = CRUDFeedback.deleted("transaction", count: transactions.count)
