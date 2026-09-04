@@ -39,6 +39,262 @@ struct DataPortabilityService {
         return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
+    // MARK: - CSV import
+
+    /// One parsed CSV row, before it's checked for duplicates or resolved
+    /// against the store's categories/tags/accounts.
+    struct CSVImportRow: Equatable {
+        var date: Date
+        var merchant: String
+        var originalDescription: String
+        var accountName: String
+        /// `nil` for a blank cell or literal "Uncategorized".
+        var categoryName: String?
+        var amount: Decimal
+        var isIncome: Bool
+        var isRecurring: Bool
+        var isExcluded: Bool
+        var tagNames: [String]
+        var note: String
+    }
+
+    enum CSVImportError: LocalizedError, Equatable {
+        case missingRequiredColumns
+        case noRows
+
+        var errorDescription: String? {
+            switch self {
+            case .missingRequiredColumns: "The file needs at least Date, Merchant, and Amount columns."
+            case .noRows: "No transaction rows found in this file."
+            }
+        }
+    }
+
+    /// Splits raw CSV text into rows of fields. RFC-4180 aware: quoted fields
+    /// may contain commas/newlines, `""` is an escaped quote, and either CRLF
+    /// or bare LF line endings are accepted (so a file edited on any platform
+    /// still parses).
+    static func parseCSVRows(_ text: String) -> [[String]] {
+        // Unicode scalars, not `Character`s: Swift's grapheme-cluster rules
+        // merge a CR immediately followed by LF into a *single* `Character`
+        // (GB3 — "don't break between CR and LF"), so comparing `Character`s
+        // against "\r" / "\n" separately silently fails to ever match a CRLF
+        // pair. Scalars have no such clustering.
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var inQuotes = false
+        let scalars = Array(text.unicodeScalars)
+        let quote: Unicode.Scalar = "\""
+        let comma: Unicode.Scalar = ","
+        let cr: Unicode.Scalar = "\r"
+        let lf: Unicode.Scalar = "\n"
+        var i = 0
+        while i < scalars.count {
+            let c = scalars[i]
+            if inQuotes {
+                if c == quote {
+                    if i + 1 < scalars.count, scalars[i + 1] == quote {
+                        field.unicodeScalars.append(quote)
+                        i += 1
+                    } else {
+                        inQuotes = false
+                    }
+                } else {
+                    field.unicodeScalars.append(c)
+                }
+            } else if c == quote {
+                inQuotes = true
+            } else if c == comma {
+                row.append(field)
+                field = ""
+            } else if c == cr || c == lf {
+                if c == cr, i + 1 < scalars.count, scalars[i + 1] == lf { i += 1 }
+                row.append(field)
+                rows.append(row)
+                row = []
+                field = ""
+            } else {
+                field.unicodeScalars.append(c)
+            }
+            i += 1
+        }
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            rows.append(row)
+        }
+        return rows.filter { !($0.count == 1 && $0[0].trimmingCharacters(in: .whitespaces).isEmpty) }
+    }
+
+    /// Every other date in the store is anchored to local midnight (a
+    /// `DatePicker`-entered date, or an OCR-inferred one) — `isSameDay` /
+    /// month filtering / duplicate detection all reason in the current
+    /// calendar's time zone. Parsing a bare "yyyy-MM-dd" as UTC (which
+    /// `ISO8601DateFormatter` does by default) would silently shift it a day
+    /// in either direction outside UTC, so every format here is explicitly
+    /// parsed in the current time zone instead.
+    private static func parseCSVDate(_ text: String) -> Date? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        for format in ["yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy"] {
+            let formatter = DateFormatter()
+            formatter.dateFormat = format
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = .current
+            if let date = formatter.date(from: trimmed) { return date }
+        }
+        return nil
+    }
+
+    /// Parses CSV text shaped like `transactionsCSV`'s export — header names
+    /// matched case-insensitively and in any order; only Date, Merchant, and
+    /// Amount are required, so a trimmed-down or hand-edited spreadsheet still
+    /// imports. A row with an unparseable date/amount or an empty merchant is
+    /// silently skipped (it never reaches the store either way).
+    func parseTransactionsCSV(_ text: String) throws -> [CSVImportRow] {
+        let allRows = Self.parseCSVRows(text)
+        guard let header = allRows.first else { throw CSVImportError.noRows }
+        let index = Dictionary(
+            header.enumerated().map { ($1.trimmingCharacters(in: .whitespaces).lowercased(), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard let dateCol = index["date"], let merchantCol = index["merchant"], let amountCol = index["amount"] else {
+            throw CSVImportError.missingRequiredColumns
+        }
+        let descCol = index["original description"]
+        let accountCol = index["account"]
+        let categoryCol = index["category"]
+        let typeCol = index["type"]
+        let recurringCol = index["recurring"]
+        let excludedCol = index["excluded"]
+        let tagsCol = index["tags"]
+        let noteCol = index["note"]
+
+        var results: [CSVImportRow] = []
+        for row in allRows.dropFirst() {
+            guard row.count > max(dateCol, merchantCol, amountCol) else { continue }
+            let merchant = row[merchantCol].trimmingCharacters(in: .whitespaces)
+            guard !merchant.isEmpty,
+                  let date = Self.parseCSVDate(row[dateCol]),
+                  let amount = Decimal(string: row[amountCol].trimmingCharacters(in: .whitespaces))
+            else { continue }
+
+            let rawCategory = categoryCol.flatMap { row[safe: $0] }?.trimmingCharacters(in: .whitespaces) ?? ""
+            let rawAccount = accountCol.flatMap { row[safe: $0] }?.trimmingCharacters(in: .whitespaces) ?? ""
+            let tagNames = (tagsCol.flatMap { row[safe: $0] } ?? "")
+                .split(separator: ";")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            let rawDescription = descCol.flatMap { row[safe: $0] }?.trimmingCharacters(in: .whitespaces) ?? ""
+
+            results.append(CSVImportRow(
+                date: date,
+                merchant: merchant,
+                originalDescription: rawDescription.isEmpty ? merchant : rawDescription,
+                accountName: rawAccount.isEmpty ? "Default" : rawAccount,
+                categoryName: (rawCategory.isEmpty || rawCategory.caseInsensitiveCompare("Uncategorized") == .orderedSame) ? nil : rawCategory,
+                amount: amount,
+                isIncome: (typeCol.flatMap { row[safe: $0] })?.caseInsensitiveCompare("Income") == .orderedSame,
+                isRecurring: (recurringCol.flatMap { row[safe: $0] })?.caseInsensitiveCompare("Yes") == .orderedSame,
+                isExcluded: (excludedCol.flatMap { row[safe: $0] })?.caseInsensitiveCompare("Yes") == .orderedSame,
+                tagNames: tagNames,
+                note: noteCol.flatMap { row[safe: $0] } ?? ""
+            ))
+        }
+        return results
+    }
+
+    struct CSVImportOutcome { var imported = 0; var duplicatesSkipped = 0 }
+
+    /// Resolves each row's account/category/tags against the store (creating
+    /// them if they don't exist by name — a re-imported export, or a CSV from
+    /// another app, shouldn't silently lose that information), skips rows that
+    /// are a high-confidence duplicate of an existing transaction **or** an
+    /// earlier row in this same import, normalizes the amount via the
+    /// resolved account's type, and saves once.
+    @MainActor
+    func importCSVRows(
+        _ rows: [CSVImportRow],
+        categories: [Category],
+        tags: [Tag],
+        accounts: [Account],
+        existingTransactions: [Transaction],
+        modelContext: ModelContext
+    ) -> CSVImportOutcome {
+        let accountService = AccountService()
+        let tagService = TagService()
+        let duplicateService = DuplicateMatchingService()
+        let normalizer = TransactionNormalizer()
+
+        var categoriesByKey = Dictionary(
+            categories.map { (CategoryService.normalizedName($0.name), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var knownAccounts = accounts
+        var knownTags = tags
+        var snapshots = existingTransactions.map(DuplicateTransactionSnapshot.init(transaction:))
+        var outcome = CSVImportOutcome()
+
+        for row in rows {
+            let incoming = DuplicateTransactionSnapshot(
+                accountName: row.accountName, merchantName: row.merchant, originalDescription: row.originalDescription,
+                amount: row.amount, transactionDate: row.date, status: .posted
+            )
+            if duplicateService.highConfidenceDuplicate(for: incoming, against: snapshots) != nil {
+                outcome.duplicatesSkipped += 1
+                continue
+            }
+
+            let accountType = accountService.resolveType(for: row.accountName, in: knownAccounts)
+            if accountService.account(named: row.accountName, in: knownAccounts) == nil,
+               let created = accountService.upsert(name: row.accountName, type: .other, in: knownAccounts, modelContext: modelContext) {
+                knownAccounts.append(created)
+            }
+
+            var category: Category?
+            if let categoryName = row.categoryName {
+                let key = CategoryService.normalizedName(categoryName)
+                if let existing = categoriesByKey[key] {
+                    category = existing
+                } else {
+                    let created = Category(
+                        name: categoryName, colorHex: "#6C757D", symbolName: "tag",
+                        sortOrder: (categoriesByKey.values.map(\.sortOrder).max() ?? -1) + 1
+                    )
+                    modelContext.insert(created)
+                    categoriesByKey[key] = created
+                    category = created
+                }
+            }
+
+            let resolvedTags: [Tag] = row.tagNames.compactMap { name in
+                guard let tag = tagService.upsert(name: name, in: knownTags, modelContext: modelContext) else { return nil }
+                if !knownTags.contains(where: { $0.id == tag.id }) { knownTags.append(tag) }
+                return tag
+            }
+
+            let transaction = Transaction(
+                accountName: row.accountName, merchantName: row.merchant, originalDescription: row.originalDescription,
+                amount: row.amount, transactionDate: row.date, status: .posted,
+                isExcluded: row.isExcluded, isRecurring: row.isRecurring, isIncome: row.isIncome,
+                note: row.note, category: category
+            )
+            modelContext.insert(transaction)
+            if !resolvedTags.isEmpty { transaction.tags = resolvedTags }
+            transaction.applyNormalization(
+                normalizer.normalize(originalAmount: row.amount, accountType: accountType, description: row.merchant),
+                accountType: accountType
+            )
+
+            snapshots.append(DuplicateTransactionSnapshot(transaction: transaction))
+            outcome.imported += 1
+        }
+
+        modelContext.saveOrLog("CSV import")
+        return outcome
+    }
+
     /// There's no iCloud sync yet, so a JSON export is the only way to not lose
     /// everything if the phone is lost or reset. `true` when it's been over
     /// `thresholdDays` since the last export (or there's never been one and the

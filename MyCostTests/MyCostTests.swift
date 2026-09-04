@@ -3390,6 +3390,93 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(csv.contains("\"said \"\"great\"\"\"")) // quote → doubled + wrapped
     }
 
+    // MARK: - CSV import
+
+    func testCSVRoundTripsThroughExportAndImport() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let tag = Tag(name: "Work")
+        context.insert(tag)
+        let t = insertTransaction("Bistro, The", amount: 25, on: date(2026, 8, 3), category: dining)
+        t.tags = [tag]
+        try context.save()
+
+        let service = DataPortabilityService()
+        let csv = service.transactionsCSV(try allTransactions())
+        let rows = try service.parseTransactionsCSV(csv)
+        XCTAssertEqual(rows.count, 1)
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.merchant, "Bistro, The")
+        XCTAssertEqual(row.amount, 25)
+        XCTAssertEqual(row.categoryName, "Dining")
+        XCTAssertEqual(row.tagNames, ["Work"])
+        XCTAssertFalse(row.isIncome)
+        XCTAssertFalse(row.isRecurring)
+        XCTAssertFalse(row.isExcluded)
+    }
+
+    func testCSVImportRequiresDateMerchantAmountColumns() {
+        let service = DataPortabilityService()
+        XCTAssertThrowsError(try service.parseTransactionsCSV("Foo,Bar\n1,2\n")) { error in
+            XCTAssertEqual(error as? DataPortabilityService.CSVImportError, .missingRequiredColumns)
+        }
+    }
+
+    func testCSVImportSkipsRowsWithUnparseableDateOrAmount() throws {
+        let csv = "Date,Merchant,Amount\n2026-08-03,Good Row,10\nnot-a-date,Bad Date,10\n2026-08-04,Bad Amount,not-a-number\n"
+        let rows = try DataPortabilityService().parseTransactionsCSV(csv)
+        XCTAssertEqual(rows.map(\.merchant), ["Good Row"])
+    }
+
+    func testCSVImportCreatesMissingCategoryTagAndAccount() throws {
+        let rows = try DataPortabilityService().parseTransactionsCSV(
+            "Date,Merchant,Account,Category,Amount,Tags\n2026-08-03,New Merchant,Visa,Travel,120,Work; Trip\n"
+        )
+        let outcome = DataPortabilityService().importCSVRows(
+            rows, categories: [], tags: [], accounts: [], existingTransactions: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.imported, 1)
+        XCTAssertEqual(outcome.duplicatesSkipped, 0)
+
+        let transactions = try allTransactions()
+        XCTAssertEqual(transactions.count, 1)
+        let imported = try XCTUnwrap(transactions.first)
+        XCTAssertEqual(imported.accountName, "Visa")
+        XCTAssertEqual(imported.category?.name, "Travel")
+        XCTAssertEqual(Set(imported.tags.map(\.name)), ["Work", "Trip"])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Account>()).count, 1)
+    }
+
+    func testCSVImportSkipsHighConfidenceDuplicatesOfExistingTransactions() throws {
+        let existing = insertTransaction("Costco", amount: 100, on: date(2026, 8, 3))
+        try context.save()
+
+        let rows = try DataPortabilityService().parseTransactionsCSV(
+            "Date,Merchant,Amount\n2026-08-03,Costco,100\n2026-08-05,New One,40\n"
+        )
+        let outcome = DataPortabilityService().importCSVRows(
+            rows, categories: [], tags: [], accounts: [], existingTransactions: [existing], modelContext: context
+        )
+        XCTAssertEqual(outcome.imported, 1)
+        XCTAssertEqual(outcome.duplicatesSkipped, 1)
+        XCTAssertEqual(try allTransactions().count, 2) // existing + the one new import
+    }
+
+    func testCSVImportSkipsDuplicatesWithinTheSameFile() throws {
+        let rows = try DataPortabilityService().parseTransactionsCSV(
+            "Date,Merchant,Amount\n2026-08-03,Costco,100\n2026-08-03,Costco,100\n"
+        )
+        let outcome = DataPortabilityService().importCSVRows(
+            rows, categories: [], tags: [], accounts: [], existingTransactions: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.imported, 1)
+        XCTAssertEqual(outcome.duplicatesSkipped, 1)
+    }
+
+    func testParseCSVRowsHandlesQuotedCommasAndEscapedQuotes() {
+        let rows = DataPortabilityService.parseCSVRows("a,\"b, c\",\"d\"\"e\"\r\n1,2,3\n")
+        XCTAssertEqual(rows, [["a", "b, c", "d\"e"], ["1", "2", "3"]])
+    }
+
     func testBackupRoundTripsThroughJSON() throws {
         let dining = makeCategory("Dining", sortOrder: 0)
         let series = RecurringPayment(merchantName: "Netflix", expectedAmount: 20, frequency: .monthly)

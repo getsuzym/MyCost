@@ -17,6 +17,13 @@ struct TransactionHistoryView: View {
     @State private var scopeIsMonth = true
     @State private var monthAnchor = Date()
 
+    /// Multi-select for bulk categorize / tag / delete.
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var isShowingCategoryPicker = false
+    @State private var isShowingTagPicker = false
+    @State private var isShowingBatchDeleteConfirmation = false
+
     private let monthly = MonthlyTransactionsService()
 
     private enum CategoryFilter: Hashable {
@@ -157,11 +164,29 @@ struct TransactionHistoryView: View {
                 }
             } else {
                 ForEach(filteredTransactions) { transaction in
-                    NavigationLink {
-                        TransactionDetailView(transaction: transaction)
-                    } label: {
-                        TransactionRowView(transaction: transaction)
-                            .opacity(transaction.isExcluded ? 0.45 : 1)
+                    // Selection mode swaps a row's tap target for a checkmark
+                    // Button instead of navigating — the row's own content
+                    // (TransactionRowView) never changes, only what wraps it.
+                    if isSelecting {
+                        Button {
+                            toggleSelection(transaction.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selectedIDs.contains(transaction.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedIDs.contains(transaction.id) ? Theme.accent : .secondary)
+                                TransactionRowView(transaction: transaction)
+                                    .opacity(transaction.isExcluded ? 0.45 : 1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("history.selectRow")
+                    } else {
+                        NavigationLink {
+                            TransactionDetailView(transaction: transaction)
+                        } label: {
+                            TransactionRowView(transaction: transaction)
+                                .opacity(transaction.isExcluded ? 0.45 : 1)
+                        }
                     }
                 }
                 .onDelete(perform: deleteTransactions)
@@ -171,19 +196,60 @@ struct TransactionHistoryView: View {
         .themedListBackground()
         .searchable(text: $searchText, prompt: "Search transactions")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isAddingTransaction = true
-                } label: {
-                    Label("Add Transaction", systemImage: "plus")
+            ToolbarItem(placement: .topBarLeading) {
+                Button(isSelecting ? "Cancel" : "Select") {
+                    if isSelecting { exitSelection() } else { isSelecting = true }
                 }
-                .accessibilityIdentifier("history.addTransaction")
+                .accessibilityIdentifier("history.toggleSelect")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                if !isSelecting {
+                    Button {
+                        isAddingTransaction = true
+                    } label: {
+                        Label("Add Transaction", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("history.addTransaction")
+                }
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                if isSelecting {
+                    Text(selectedIDs.isEmpty ? "Select transactions" : "\(selectedIDs.count) selected")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Category") { isShowingCategoryPicker = true }
+                        .disabled(selectedIDs.isEmpty)
+                        .accessibilityIdentifier("history.batchCategory")
+                    Spacer()
+                    Button("Tag") { isShowingTagPicker = true }
+                        .disabled(selectedIDs.isEmpty)
+                        .accessibilityIdentifier("history.batchTag")
+                    Spacer()
+                    Button("Delete", role: .destructive) { isShowingBatchDeleteConfirmation = true }
+                        .disabled(selectedIDs.isEmpty)
+                        .accessibilityIdentifier("history.batchDelete")
+                }
             }
         }
         .sheet(isPresented: $isAddingTransaction) {
             NavigationStack {
                 TransactionEditorView(mode: .add)
             }
+        }
+        .sheet(isPresented: $isShowingCategoryPicker) {
+            BatchCategoryPickerView(categories: categories, onSelect: applyBatchCategory)
+        }
+        .sheet(isPresented: $isShowingTagPicker) {
+            BatchTagPickerView(tags: allTags, onApply: applyBatchTags)
+        }
+        .confirmationDialog(
+            "Delete \(selectedIDs.count) transaction\(selectedIDs.count == 1 ? "" : "s")?",
+            isPresented: $isShowingBatchDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive, action: deleteSelected)
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -196,5 +262,125 @@ struct TransactionHistoryView: View {
         let toDelete = filteredTransactions.elements(at: offsets)
         guard !toDelete.isEmpty else { return }
         trashBin.deleteTransactions(toDelete, modelContext: modelContext)
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) }
+    }
+
+    private func exitSelection() {
+        selectedIDs.removeAll()
+        isSelecting = false
+    }
+
+    private var selectedTransactions: [Transaction] {
+        filteredTransactions.filter { selectedIDs.contains($0.id) }
+    }
+
+    private func applyBatchCategory(_ category: Category?) {
+        let selected = selectedTransactions
+        guard !selected.isEmpty else { return }
+        for transaction in selected {
+            transaction.category = category
+            transaction.updatedAt = .now
+        }
+        modelContext.saveOrLog("batch categorize transactions")
+        ToastCenter.shared.success(CRUDFeedback.updated("transaction", count: selected.count))
+        exitSelection()
+    }
+
+    private func applyBatchTags(_ tagsToAdd: [Tag]) {
+        let selected = selectedTransactions
+        guard !selected.isEmpty, !tagsToAdd.isEmpty else { return }
+        for transaction in selected {
+            for tag in tagsToAdd where !transaction.tags.contains(where: { $0.id == tag.id }) {
+                transaction.tags.append(tag)
+            }
+            transaction.updatedAt = .now
+        }
+        modelContext.saveOrLog("batch tag transactions")
+        ToastCenter.shared.success("\(selected.count) transaction\(selected.count == 1 ? "" : "s") tagged")
+        exitSelection()
+    }
+
+    private func deleteSelected() {
+        let selected = selectedTransactions
+        guard !selected.isEmpty else { return }
+        trashBin.deleteTransactions(selected, modelContext: modelContext)
+        exitSelection()
+    }
+}
+
+/// Sheet for bulk-setting the category on every selected transaction.
+private struct BatchCategoryPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let categories: [Category]
+    let onSelect: (Category?) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button("Uncategorized") { onSelect(nil); dismiss() }
+                ForEach(categories.alphabetizedByName()) { category in
+                    Button(category.name) { onSelect(category); dismiss() }
+                }
+            }
+            .themedListBackground()
+            .navigationTitle("Set Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// Sheet for bulk-adding one or more tags to every selected transaction
+/// (a union — existing tags on those transactions are left alone).
+private struct BatchTagPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let tags: [Tag]
+    let onApply: ([Tag]) -> Void
+
+    @State private var selectedTagIDs: Set<UUID> = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if tags.isEmpty {
+                    Text("No tags yet. Create one from a transaction's editor first.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(tags.alphabetizedByName()) { tag in
+                    Button {
+                        if selectedTagIDs.contains(tag.id) { selectedTagIDs.remove(tag.id) }
+                        else { selectedTagIDs.insert(tag.id) }
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedTagIDs.contains(tag.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedTagIDs.contains(tag.id) ? Theme.accent : .secondary)
+                            Text(tag.name).foregroundStyle(.primary)
+                        }
+                    }
+                }
+            }
+            .themedListBackground()
+            .navigationTitle("Add Tags")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onApply(tags.filter { selectedTagIDs.contains($0.id) })
+                        dismiss()
+                    }
+                    .disabled(selectedTagIDs.isEmpty)
+                }
+            }
+        }
     }
 }

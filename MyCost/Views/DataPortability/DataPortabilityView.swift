@@ -16,6 +16,8 @@ struct DataPortabilityView: View {
     @State private var share: ShareURL?
     @State private var isImporting = false
     @State private var pendingRestore: DataPortabilityService.Backup?
+    @State private var isImportingCSV = false
+    @State private var pendingCSVImport: [DataPortabilityService.CSVImportRow]?
     @State private var message: String?
     /// Seconds since the reference date — 0 means "never". Set whenever a
     /// backup export is prepared (Export CSV doesn't count; only the full
@@ -62,6 +64,19 @@ struct DataPortabilityView: View {
             }
 
             Section {
+                Button {
+                    isImportingCSV = true
+                } label: {
+                    Label("Import transactions (CSV)\u{2026}", systemImage: "tablecells")
+                }
+                .accessibilityIdentifier("data.importCSV")
+            } header: {
+                Text("Import")
+            } footer: {
+                Text("Adds transactions from a CSV file (matching the export above, or a spreadsheet with Date / Merchant / Amount columns) to what's already here. Categories, tags, and accounts named in the file are created if they don't exist yet. Likely duplicates of existing transactions are skipped.")
+            }
+
+            Section {
                 Button(role: .destructive) {
                     isImporting = true
                 } label: {
@@ -86,6 +101,9 @@ struct DataPortabilityView: View {
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
             handleImport(result)
         }
+        .fileImporter(isPresented: $isImportingCSV, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
+            handleCSVImport(result)
+        }
         .confirmationDialog(
             "Replace all data with this backup?",
             isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }),
@@ -96,6 +114,18 @@ struct DataPortabilityView: View {
         } message: {
             if let b = pendingRestore {
                 Text("The backup has \(b.transactions.count) transactions, \(b.categories.count) categories, \(b.merchantRules.count) rules. Everything in the app now will be removed.")
+            }
+        }
+        .confirmationDialog(
+            "Import these transactions?",
+            isPresented: Binding(get: { pendingCSVImport != nil }, set: { if !$0 { pendingCSVImport = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Import") { runCSVImport() }
+            Button("Cancel", role: .cancel) { pendingCSVImport = nil }
+        } message: {
+            if let rows = pendingCSVImport {
+                Text("Found \(rows.count) transaction\(rows.count == 1 ? "" : "s") in the file. Likely duplicates of what's already here will be skipped.")
             }
         }
     }
@@ -142,6 +172,44 @@ struct DataPortabilityView: View {
                 message = "That doesn't look like a MyCost backup: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func handleCSVImport(_ result: Result<URL, Error>) {
+        message = nil
+        switch result {
+        case .failure(let error):
+            message = "Couldn't open the file: \(error.localizedDescription)"
+        case .success(let url):
+            let needsStop = url.startAccessingSecurityScopedResource()
+            defer { if needsStop { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let text = try String(contentsOf: url, encoding: .utf8)
+                let rows = try service.parseTransactionsCSV(text)
+                guard !rows.isEmpty else {
+                    message = "No transaction rows found in that file."
+                    return
+                }
+                pendingCSVImport = rows
+            } catch {
+                message = (error as? DataPortabilityService.CSVImportError)?.errorDescription
+                    ?? "Couldn't read that file: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func runCSVImport() {
+        guard let rows = pendingCSVImport else { return }
+        pendingCSVImport = nil
+        let outcome = service.importCSVRows(
+            rows, categories: categories, tags: tags, accounts: accounts,
+            existingTransactions: transactions, modelContext: modelContext
+        )
+        var summary = "\(outcome.imported) transaction\(outcome.imported == 1 ? "" : "s") imported"
+        if outcome.duplicatesSkipped > 0 {
+            summary += " \u{00B7} \(outcome.duplicatesSkipped) duplicate\(outcome.duplicatesSkipped == 1 ? "" : "s") skipped"
+        }
+        message = summary
+        ToastCenter.shared.success(summary)
     }
 
     private func runRestore() {
