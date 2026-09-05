@@ -20,12 +20,35 @@ struct TransactionDetailView: View {
                 LabeledContent("Category", value: transaction.category?.name ?? "Uncategorized")
             }
 
-            Section("Options") {
-                LabeledContent("Type", value: transaction.isIncome ? "Income" : "Spending")
-                LabeledContent("Excluded", value: transaction.isExcluded ? "Yes" : "No")
-                if transaction.isExcluded, !transaction.excludedReason.isEmpty {
-                    LabeledContent("Reason", value: transaction.excludedReason)
+            Section {
+                Toggle("Income (money in)", isOn: Binding(
+                    get: { transaction.isIncome },
+                    set: { setIncome($0) }
+                ))
+                .accessibilityIdentifier("transactionDetail.income")
+
+                if !transaction.isIncome {
+                    Toggle("Counts as spending", isOn: Binding(
+                        get: { transaction.countsAsSpending },
+                        set: { setCountsAsSpending($0) }
+                    ))
+                    .accessibilityIdentifier("transactionDetail.countsAsSpending")
                 }
+
+                Toggle("Exclude from totals", isOn: Binding(
+                    get: { transaction.isExcluded },
+                    set: { setExcluded($0) }
+                ))
+                .accessibilityIdentifier("transactionDetail.excluded")
+                if transaction.isExcluded {
+                    TextField("Reason", text: $transaction.excludedReason)
+                        .onChange(of: transaction.excludedReason) { _, _ in
+                            transaction.updatedAt = .now
+                            modelContext.saveOrLog("update exclusion reason")
+                        }
+                        .accessibilityIdentifier("transactionDetail.excludedReason")
+                }
+
                 Toggle("Recurring", isOn: Binding(
                     get: { transaction.isRecurring },
                     set: { setRecurring($0) }
@@ -34,6 +57,10 @@ struct TransactionDetailView: View {
                 if let recurringPayment = transaction.recurringPayment {
                     LabeledContent("Frequency", value: recurringPayment.schedule().label)
                 }
+            } header: {
+                Text("Options")
+            } footer: {
+                Text("Every toggle here saves immediately — no need to open Edit for these.")
             }
 
             Section {
@@ -108,6 +135,52 @@ struct TransactionDetailView: View {
             ToastCenter.shared.success("Recurring status updated")
         } catch {
             transaction.isRecurring = !value
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
+        }
+    }
+
+    private func setIncome(_ value: Bool) {
+        transaction.isIncome = value
+        transaction.updatedAt = .now
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success("Income status updated")
+        } catch {
+            transaction.isIncome = !value
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
+        }
+    }
+
+    /// A hand toggle here freezes the choice the same way the editor's
+    /// "Counts as spending" toggle does (`spendingCountOverridden`), so the
+    /// recurring re-check in `Transaction.contributesToSpending` doesn't
+    /// silently override it later. `normalizedAmount` is left untouched —
+    /// `spendingAmount` already returns 0 whenever `!contributesToSpending`
+    /// regardless of the stored amount, so there's nothing to recompute for a
+    /// plain on/off flip.
+    private func setCountsAsSpending(_ value: Bool) {
+        transaction.countsAsSpending = value
+        transaction.spendingCountOverridden = true
+        transaction.updatedAt = .now
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success("Spending status updated")
+        } catch {
+            transaction.countsAsSpending = !value
+            transaction.spendingCountOverridden = false
+            ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
+        }
+    }
+
+    private func setExcluded(_ value: Bool) {
+        transaction.isExcluded = value
+        if !value { transaction.excludedReason = "" }
+        transaction.updatedAt = .now
+        do {
+            try modelContext.save()
+            ToastCenter.shared.success("Exclusion status updated")
+        } catch {
+            transaction.isExcluded = !value
             ToastCenter.shared.error(CRUDFeedback.saveFailure("transaction"))
         }
     }

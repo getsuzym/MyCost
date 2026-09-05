@@ -11,12 +11,23 @@ struct SettingsView: View {
     @AppStorage("budgets.alertsEnabled") private var budgetAlertsEnabled = false
     @AppStorage("budgets.alertThresholdPercent") private var budgetAlertThresholdPercent = 90
     @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
+    @AppStorage("mycost.appLockGraceMinutes") private var appLockGraceMinutes = 0
     @AppStorage("mycost.lastBackupExportAt") private var lastBackupExportTimestamp: Double = 0
     @State private var showsNoPasscodeAlert = false
 
     private let reminderService = RecurringReminderService()
     private let budgetAlertService = BudgetAlertService()
     private let lockService = AppLockService()
+
+    private static let graceOptions: [(minutes: Int, label: String)] = [
+        (0, "Immediately"),
+        (1, "After 1 minute"),
+        (5, "After 5 minutes"),
+        (10, "After 10 minutes"),
+        (15, "After 15 minutes"),
+        (30, "After 30 minutes"),
+        (60, "After 1 hour")
+    ]
 
     private var lastBackupDate: Date? {
         lastBackupExportTimestamp == 0 ? nil : Date(timeIntervalSinceReferenceDate: lastBackupExportTimestamp)
@@ -117,10 +128,20 @@ struct SettingsView: View {
                     }
                 ))
                 .accessibilityIdentifier("settings.appLock")
+                if appLockEnabled {
+                    Picker("Require unlock", selection: $appLockGraceMinutes) {
+                        ForEach(Self.graceOptions, id: \.minutes) { option in
+                            Text(option.label).tag(option.minutes)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.appLockGrace")
+                }
             } header: {
                 Text("Privacy")
             } footer: {
-                Text("Locks MyCost whenever it leaves the foreground. Unlocks with Face ID, Touch ID, or your device passcode.")
+                Text(appLockGraceMinutes == 0
+                    ? "Locks MyCost the instant it leaves the foreground. Unlocks with Face ID, Touch ID, or your device passcode."
+                    : "Locks MyCost after it's been in the background this long — brief interruptions like a phone call or checking another app won't ask again right away.")
             }
         }
         .navigationTitle("Settings")

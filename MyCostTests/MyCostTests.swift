@@ -3528,6 +3528,27 @@ final class MyCostTests: XCTestCase {
         XCTAssertTrue(notified.isEmpty)
     }
 
+    // MARK: - App Lock grace period
+
+    func testAppLockGraceWindowRule() {
+        let backgroundedAt = date(2026, 9, 4).timeIntervalSinceReferenceDate
+
+        // No grace configured (0) -- always re-lock, regardless of elapsed time.
+        XCTAssertFalse(AppLockService.isWithinGrace(graceMinutes: 0, lastBackgroundedAt: backgroundedAt, now: date(2026, 9, 4)))
+
+        // Within the configured window.
+        let fourMinutesLater = date(2026, 9, 4).addingTimeInterval(4 * 60)
+        XCTAssertTrue(AppLockService.isWithinGrace(graceMinutes: 5, lastBackgroundedAt: backgroundedAt, now: fourMinutesLater))
+
+        // Past it.
+        let sixMinutesLater = date(2026, 9, 4).addingTimeInterval(6 * 60)
+        XCTAssertFalse(AppLockService.isWithinGrace(graceMinutes: 5, lastBackgroundedAt: backgroundedAt, now: sixMinutesLater))
+
+        // Never backgrounded (0 timestamp) -- never "within grace", even with a
+        // configured window; nothing to compare against.
+        XCTAssertFalse(AppLockService.isWithinGrace(graceMinutes: 5, lastBackgroundedAt: 0, now: fourMinutesLater))
+    }
+
     // MARK: - Export & backup
 
     func testBackupOverdueAfterThresholdOrNever() {

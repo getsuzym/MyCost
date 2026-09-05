@@ -8,16 +8,32 @@ struct RootTabView: View {
     @StateObject private var nav = AppNavigationModel()
     @AppStorage("mycost.hasOnboarded") private var hasOnboarded = false
     @AppStorage("mycost.appLockEnabled") private var appLockEnabled = false
-    /// Starts already-locked on a cold launch when App Lock is on, so the
-    /// content never flashes before the lock screen appears.
+    /// 0 = require unlock immediately on every return to foreground; otherwise
+    /// the number of minutes the app tolerates being backgrounded before it
+    /// re-locks — same "Require Passcode: Immediately / After 5 Minutes / …"
+    /// idea as iOS's own Face ID & Passcode setting.
+    @AppStorage("mycost.appLockGraceMinutes") private var appLockGraceMinutes = 0
+    /// When the app was last backgrounded, so returning to foreground can
+    /// measure elapsed time against `appLockGraceMinutes`. Persisted (not just
+    /// `@State`) so the grace period survives the app being suspended *or*
+    /// terminated and relaunched while backgrounded.
+    @AppStorage("mycost.appLockLastBackgroundedAt") private var lastBackgroundedTimestamp: Double = 0
+    /// Starts already-locked on a cold launch when App Lock is on, unless
+    /// still within the grace period from before the app was last backgrounded
+    /// — so the content never flashes before the lock screen appears, but a
+    /// force-quit-and-reopen inside the grace window doesn't re-prompt either.
     @State private var isLocked: Bool
     /// Set by a Home Screen quick action (long-press the app icon).
     @State private var isShowingQuickAddTransaction = false
 
     init() {
-        let enabled = UserDefaults.standard.bool(forKey: "mycost.appLockEnabled")
+        let defaults = UserDefaults.standard
+        let enabled = defaults.bool(forKey: "mycost.appLockEnabled")
         let uiTesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
-        _isLocked = State(initialValue: enabled && !uiTesting)
+        let graceMinutes = defaults.integer(forKey: "mycost.appLockGraceMinutes")
+        let lastBackgrounded = defaults.double(forKey: "mycost.appLockLastBackgroundedAt")
+        let withinGrace = AppLockService.isWithinGrace(graceMinutes: graceMinutes, lastBackgroundedAt: lastBackgrounded)
+        _isLocked = State(initialValue: enabled && !uiTesting && !withinGrace)
     }
 
     /// UI tests launch straight into the tabs; the intro cover would swallow
@@ -49,7 +65,7 @@ struct RootTabView: View {
         .tint(Theme.accent)
         .environmentObject(ocrReviewStore)
         .environmentObject(nav)
-        .safeAreaInset(edge: .top, spacing: 0) { reviewBanner }
+        .safeAreaInset(edge: .bottom, spacing: 0) { reviewBanner }
         .toastHost()
         .sheet(item: $nav.route) { route in
             switch route {
@@ -90,8 +106,30 @@ struct RootTabView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard appLockEnabled, !isUITesting else { return }
-            if newPhase == .background {
-                isLocked = true
+            switch newPhase {
+            case .background:
+                lastBackgroundedTimestamp = Date.now.timeIntervalSinceReferenceDate
+                // A zero grace period is "Immediately" — lock right away so
+                // nothing sensitive lingers on screen. With a grace period,
+                // relocking is deferred to the check on return to foreground
+                // below (matching iOS's own passcode grace-period behavior:
+                // the content stays as-is during that window).
+                if appLockGraceMinutes == 0 {
+                    isLocked = true
+                }
+            case .active:
+                // Only a real `.background` sets this — skip when it's 0 so a
+                // Control Center pull-down or similar `.inactive` blip (which
+                // never actually backgrounds the app) can't trigger a false
+                // relock mid-use.
+                guard lastBackgroundedTimestamp > 0 else { break }
+                let withinGrace = AppLockService.isWithinGrace(graceMinutes: appLockGraceMinutes, lastBackgroundedAt: lastBackgroundedTimestamp)
+                lastBackgroundedTimestamp = 0 // consumed; a future background starts a fresh window
+                if !withinGrace {
+                    isLocked = true
+                }
+            default:
+                break
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -132,6 +170,12 @@ struct RootTabView: View {
         // Gate ONLY on the session, never on `nav.route`. Presenting/closing the
         // Review sheet must not add/remove this inset — that reflows the tab
         // content behind an animating sheet and trips `List`'s diff.
+        //
+        // Bottom edge, not top: a top safeAreaInset visually collided with a
+        // pushed screen's own nav bar / `.searchable` field (they'd render
+        // overlapping instead of the bar being pushed cleanly below it). The
+        // bottom edge — a mini-player-style bar sitting right above the tab
+        // bar — has no such chrome to collide with.
         if ocrReviewStore.hasActiveSession {
             Button {
                 nav.openReview()
@@ -146,7 +190,7 @@ struct RootTabView: View {
                 }
                 .font(.footnote)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity)
                 .background(.thinMaterial)
             }

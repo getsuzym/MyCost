@@ -24,4 +24,15 @@ struct AppLockService {
             DispatchQueue.main.async { completion(success) }
         }
     }
+
+    /// Whether returning to the foreground at `now`, having last been
+    /// backgrounded at `lastBackgroundedAt` (a `timeIntervalSinceReferenceDate`,
+    /// 0 = never), is still inside a `graceMinutes`-long "don't ask again yet"
+    /// window (0 = no grace, i.e. always re-lock). Pure, so `RootTabView`'s
+    /// scene-phase handling and its cold-launch `init()` share one rule.
+    static func isWithinGrace(graceMinutes: Int, lastBackgroundedAt: Double, now: Date = .now) -> Bool {
+        guard graceMinutes > 0, lastBackgroundedAt > 0 else { return false }
+        let elapsedMinutes = (now.timeIntervalSinceReferenceDate - lastBackgroundedAt) / 60
+        return elapsedMinutes < Double(graceMinutes)
+    }
 }
