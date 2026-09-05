@@ -99,11 +99,11 @@ final class MyCostUITests: XCTestCase {
     /// on a top `safeAreaInset` (collided with a pushed screen's own nav bar /
     /// `.searchable` field), then a bottom `safeAreaInset` directly on the
     /// `TabView` (hid the tab bar entirely), then a full-width `VStack` sibling
-    /// (ate vertical space, crowded the tab bar). It's a compact floating button
-    /// in the bottom-trailing corner now, drawn as an `.overlay` — this checks
-    /// it obscures neither the tab bar nor a pushed screen's nav chrome.
-    /// `-ui-testing-seed-review` seeds a fake session with no OCR/photo picker
-    /// needed.
+    /// (ate vertical space, crowded the tab bar). It's a compact draggable
+    /// floating button now, drawn as an `.overlay`, resting bottom-trailing by
+    /// default — this checks it obscures neither the tab bar nor a pushed
+    /// screen's nav chrome in that default spot. `-ui-testing-seed-review`
+    /// seeds a fake session with no OCR/photo picker needed.
     func testReviewBannerNeverObscuresTheTabBarOrASearchField() {
         app.terminate()
         app = XCUIApplication()

@@ -25,6 +25,15 @@ struct RootTabView: View {
     @State private var isLocked: Bool
     /// Set by a Home Screen quick action (long-press the app icon).
     @State private var isShowingQuickAddTransaction = false
+    /// Persisted drag offset of the review button from its resting spot
+    /// (bottom-trailing, where it first shipped). `x <= 0` moves it left, `y <=
+    /// 0` moves it up; `(0, 0)` is the default resting position.
+    @AppStorage("mycost.reviewButton.offsetX") private var reviewButtonOffsetX = 0.0
+    @AppStorage("mycost.reviewButton.offsetY") private var reviewButtonOffsetY = 0.0
+    @State private var reviewButtonDragOffset: CGSize = .zero
+    /// True while a drag is in progress so the `Button`'s own action (which
+    /// SwiftUI may still fire on release) is suppressed for that one gesture.
+    @State private var reviewButtonIsDragging = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -43,18 +52,18 @@ struct RootTabView: View {
     }
 
     var body: some View {
-        // The review affordance is a floating button in the bottom-trailing
-        // corner, drawn as an `.overlay` on the TabView — NOT a `.safeAreaInset`
-        // and NOT a `VStack` sibling. Earlier shapes both had problems: a top
-        // safeAreaInset collided with a pushed screen's own nav bar /
-        // `.searchable` field; a bottom safeAreaInset applied straight to a
-        // TabView fought the tab bar's own bottom-safe-area handling and hid the
-        // tab bar entirely; a full-width VStack sibling worked but ate a strip
-        // of vertical space on every screen and crowded the tab bar. An overlay
-        // changes nothing about the content's layout (so toggling it on/off as
-        // the session starts/ends can't reflow a `List` behind an animating
-        // sheet), and a compact corner button overlaps neither the tab bar
-        // (it floats above it) nor any screen's nav chrome.
+        // The review affordance is a draggable floating button, drawn as an
+        // `.overlay` on the TabView — NOT a `.safeAreaInset` and NOT a `VStack`
+        // sibling. Earlier shapes each had problems: a top safeAreaInset
+        // collided with a pushed screen's own nav bar / `.searchable` field; a
+        // bottom safeAreaInset applied straight to a TabView fought the tab
+        // bar's own bottom-safe-area handling and hid the tab bar entirely; a
+        // full-width VStack sibling worked but ate a strip of vertical space on
+        // every screen and crowded the tab bar. An overlay changes nothing
+        // about the content's layout (so toggling it on/off as the session
+        // starts/ends can't reflow a `List` behind an animating sheet), and a
+        // compact button the user can drag out of the way overlaps neither the
+        // tab bar (it stays above it) nor any screen's nav chrome.
         TabView {
             NavigationStack {
                 DashboardView()
@@ -203,42 +212,80 @@ struct RootTabView: View {
 
     @ViewBuilder
     private var reviewFloatingButton: some View {
-        // Gate ONLY on the session, never on `nav.route`. As an `.overlay` this
-        // add/remove doesn't reflow the tab content, but keep the animation
-        // suppressed so it just appears/disappears cleanly rather than sliding
-        // around behind a dismissing sheet.
+        // Gate ONLY on the session, never on `nav.route`. As an `.overlay` its
+        // add/remove doesn't reflow the tab content; `.transition(.identity)`
+        // keeps it from sliding in/out behind a dismissing sheet.
         if ocrReviewStore.hasActiveSession {
             let count = ocrReviewStore.drafts.count
+            // The button rests bottom-trailing with this padding — the exact
+            // layout that passes the "never obscures the tab bar / nav chrome"
+            // UI test — and a real `Button` keeps its `.buttons[…]` /
+            // `isHittable` semantics. A drag only adds a clamped, persisted
+            // `.offset` from there (never past the resting spot on either axis,
+            // so it can't slide under the tab bar), and snaps to the nearer
+            // side edge on release.
+            let screen = UIScreen.main.bounds.size
+            let margin: CGFloat = 18
+            let bottomInset: CGFloat = 66
+            let leftLimit = -max(screen.width - 52 - margin * 2, 0)
+            let topLimit = -max(screen.height - 52 - bottomInset - 80, 0)
+            let dx = min(max(reviewButtonOffsetX + reviewButtonDragOffset.width, leftLimit), 0)
+            let dy = min(max(reviewButtonOffsetY + reviewButtonDragOffset.height, topLimit), 0)
+
             Button {
+                guard !reviewButtonIsDragging else { return }
                 nav.openReview()
             } label: {
-                Image(systemName: "checklist")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
-                    .background(Theme.accent, in: Circle())
-                    .overlay(alignment: .topTrailing) {
-                        Text("\(count)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .frame(minWidth: 18, minHeight: 18)
-                            .background(Color.red, in: Capsule())
-                            .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 2))
-                            .offset(x: 6, y: -6)
-                    }
-                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+                reviewButtonIcon(count: count)
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 18)
-            // Clear the ~49pt tab bar (plus a little breathing room) so the
-            // button floats above it and never sits on a tab.
-            .padding(.bottom, 66)
+            .offset(x: dx, y: dy)
+            .padding(.trailing, margin)
+            .padding(.bottom, bottomInset)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        reviewButtonIsDragging = true
+                        reviewButtonDragOffset = value.translation
+                    }
+                    .onEnded { value in
+                        let newX = min(max(reviewButtonOffsetX + value.translation.width, leftLimit), 0)
+                        let newY = min(max(reviewButtonOffsetY + value.translation.height, topLimit), 0)
+                        reviewButtonDragOffset = .zero
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            reviewButtonOffsetX = newX < leftLimit / 2 ? leftLimit : 0
+                            reviewButtonOffsetY = newY
+                        }
+                        // The Button's action fires right after this on release;
+                        // clear the flag on the next tick so it's suppressed
+                        // exactly once.
+                        DispatchQueue.main.async { reviewButtonIsDragging = false }
+                    }
+            )
             .accessibilityIdentifier("app.reviewBanner")
             .accessibilityLabel("\(count) transaction\(count == 1 ? "" : "s") awaiting review")
-            .accessibilityHint("Opens the review screen")
+            .accessibilityHint("Opens the review screen. Drag to reposition.")
             .transition(.identity)
-            .transaction { $0.animation = nil }
         }
+    }
+
+    private func reviewButtonIcon(count: Int) -> some View {
+        Image(systemName: "checklist")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 52, height: 52)
+            .background(Theme.accent, in: Circle())
+            .overlay(alignment: .topTrailing) {
+                Text("\(count)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 18, minHeight: 18)
+                    .background(Color.red, in: Capsule())
+                    .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 2))
+                    .offset(x: 6, y: -6)
+            }
+            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+            .contentShape(Circle())
     }
 }
