@@ -95,6 +95,48 @@ final class MyCostUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Transactions"].waitForExistence(timeout: 5))
     }
 
+    /// Regression: the "transactions awaiting review" affordance previously sat
+    /// on a top `safeAreaInset` (collided with a pushed screen's own nav bar /
+    /// `.searchable` field), then a bottom `safeAreaInset` directly on the
+    /// `TabView` (hid the tab bar entirely), then a full-width `VStack` sibling
+    /// (ate vertical space, crowded the tab bar). It's a compact floating button
+    /// in the bottom-trailing corner now, drawn as an `.overlay` — this checks
+    /// it obscures neither the tab bar nor a pushed screen's nav chrome.
+    /// `-ui-testing-seed-review` seeds a fake session with no OCR/photo picker
+    /// needed.
+    func testReviewBannerNeverObscuresTheTabBarOrASearchField() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-seed-review"]
+        app.launch()
+
+        let banner = app.buttons["app.reviewBanner"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 5))
+
+        let tabBar = app.tabBars.firstMatch
+        for tabName in ["Dashboard", "Recurring", "More"] {
+            let tab = tabBar.buttons[tabName]
+            XCTAssertTrue(tab.exists, "\(tabName) tab should exist")
+            XCTAssertTrue(tab.isHittable, "\(tabName) tab should be hittable while the review banner is showing")
+        }
+
+        tabBar.buttons["More"].tap()
+        app.buttons["more.transactions"].tap()
+        XCTAssertTrue(app.navigationBars["Transactions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(banner.exists, "Banner should persist across navigation")
+        XCTAssertTrue(banner.isHittable)
+
+        // The nav-bar "Select" button and the topmost content row (the month
+        // navigator) both sit right where the old top-edge banner used to
+        // collide with this screen's chrome.
+        let selectButton = app.buttons["history.toggleSelect"]
+        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(selectButton.isHittable, "Nav bar button should stay reachable alongside the review banner")
+        let previousMonth = app.buttons["history.previousMonth"]
+        XCTAssertTrue(previousMonth.exists)
+        XCTAssertTrue(previousMonth.isHittable, "Top content row should stay reachable alongside the review banner")
+    }
+
     // MARK: - Add-transaction crash guards
 
     func testAddFirstTransactionThenDashboardRebuildDoesNotCrash() {

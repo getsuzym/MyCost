@@ -43,6 +43,18 @@ struct RootTabView: View {
     }
 
     var body: some View {
+        // The review affordance is a floating button in the bottom-trailing
+        // corner, drawn as an `.overlay` on the TabView — NOT a `.safeAreaInset`
+        // and NOT a `VStack` sibling. Earlier shapes both had problems: a top
+        // safeAreaInset collided with a pushed screen's own nav bar /
+        // `.searchable` field; a bottom safeAreaInset applied straight to a
+        // TabView fought the tab bar's own bottom-safe-area handling and hid the
+        // tab bar entirely; a full-width VStack sibling worked but ate a strip
+        // of vertical space on every screen and crowded the tab bar. An overlay
+        // changes nothing about the content's layout (so toggling it on/off as
+        // the session starts/ends can't reflow a `List` behind an animating
+        // sheet), and a compact corner button overlaps neither the tab bar
+        // (it floats above it) nor any screen's nav chrome.
         TabView {
             NavigationStack {
                 DashboardView()
@@ -63,9 +75,11 @@ struct RootTabView: View {
             .accessibilityIdentifier("tab.more")
         }
         .tint(Theme.accent)
+        .overlay(alignment: .bottomTrailing) {
+            reviewFloatingButton
+        }
         .environmentObject(ocrReviewStore)
         .environmentObject(nav)
-        .safeAreaInset(edge: .bottom, spacing: 0) { reviewBanner }
         .toastHost()
         .sheet(item: $nav.route) { route in
             switch route {
@@ -94,6 +108,7 @@ struct RootTabView: View {
             SeedDataService.seedDefaultCategoriesIfNeeded(modelContext: modelContext)
             SeedDataService.countAllTransactionsByDefaultIfNeeded(modelContext: modelContext)
             SeedDataService.tagLikelyIncomeIfNeeded(modelContext: modelContext)
+            seedReviewSessionForUITestingIfRequested()
         }
         .fullScreenCover(isPresented: showOnboarding) {
             OnboardingView()
@@ -142,6 +157,27 @@ struct RootTabView: View {
         }
     }
 
+    /// `-ui-testing-seed-review` seeds a fake review session on launch so a UI
+    /// test can verify the banner (which otherwise only appears after a real
+    /// OCR import, which XCUITest can't easily drive) — specifically, that it
+    /// never obscures the tab bar or a pushed screen's own nav chrome.
+    private func seedReviewSessionForUITestingIfRequested() {
+        guard isUITesting, ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-review") else { return }
+        let candidates = (1...2).map { index in
+            TransactionCandidate(
+                detectedDate: .now,
+                rawMerchantDescription: "Test Merchant \(index)",
+                amount: Decimal(10 * index),
+                status: .posted,
+                originalOCRText: "Test Merchant \(index) $\(10 * index).00",
+                sourceText: "Test Merchant \(index) $\(10 * index).00",
+                confidence: .empty,
+                validationFlags: []
+            )
+        }
+        ocrReviewStore.replaceCandidates(candidates)
+    }
+
     /// A quick action tapped while the app was locked stays pending — this
     /// fires again once `isLocked` clears, so it isn't lost, but also never
     /// jumps straight to "Add Transaction" past the lock screen.
@@ -166,36 +202,41 @@ struct RootTabView: View {
     }
 
     @ViewBuilder
-    private var reviewBanner: some View {
-        // Gate ONLY on the session, never on `nav.route`. Presenting/closing the
-        // Review sheet must not add/remove this inset — that reflows the tab
-        // content behind an animating sheet and trips `List`'s diff.
-        //
-        // Bottom edge, not top: a top safeAreaInset visually collided with a
-        // pushed screen's own nav bar / `.searchable` field (they'd render
-        // overlapping instead of the bar being pushed cleanly below it). The
-        // bottom edge — a mini-player-style bar sitting right above the tab
-        // bar — has no such chrome to collide with.
+    private var reviewFloatingButton: some View {
+        // Gate ONLY on the session, never on `nav.route`. As an `.overlay` this
+        // add/remove doesn't reflow the tab content, but keep the animation
+        // suppressed so it just appears/disappears cleanly rather than sliding
+        // around behind a dismissing sheet.
         if ocrReviewStore.hasActiveSession {
+            let count = ocrReviewStore.drafts.count
             Button {
                 nav.openReview()
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "checklist")
-                    Text("\(ocrReviewStore.drafts.count) transaction\(ocrReviewStore.drafts.count == 1 ? "" : "s") awaiting review")
-                        .lineLimit(1)
-                    Spacer()
-                    Text("Review").fontWeight(.semibold)
-                    Image(systemName: "chevron.right").font(.caption)
-                }
-                .font(.footnote)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(.thinMaterial)
+                Image(systemName: "checklist")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(Theme.accent, in: Circle())
+                    .overlay(alignment: .topTrailing) {
+                        Text("\(count)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(Color.red, in: Capsule())
+                            .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 2))
+                            .offset(x: 6, y: -6)
+                    }
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(.plain)
+            .padding(.trailing, 18)
+            // Clear the ~49pt tab bar (plus a little breathing room) so the
+            // button floats above it and never sits on a tab.
+            .padding(.bottom, 66)
             .accessibilityIdentifier("app.reviewBanner")
+            .accessibilityLabel("\(count) transaction\(count == 1 ? "" : "s") awaiting review")
+            .accessibilityHint("Opens the review screen")
             .transition(.identity)
             .transaction { $0.animation = nil }
         }
