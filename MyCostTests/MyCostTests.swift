@@ -3863,6 +3863,120 @@ final class MyCostTests: XCTestCase {
         XCTAssertNil(BankStatementImportService.parseFlexibleDate("not a date"))
     }
 
+    // MARK: - PDF statement parsing
+
+    private var rbcStatementText: String {
+        """
+        Royal Bank of Canada
+        Statement Period: August 1 to August 31, 2026
+        Your RBC Chequing Account
+
+        Date     Description                  Withdrawals ($)   Deposits ($)   Balance ($)
+        Aug 1    Opening Balance                                                5,000.00
+        Aug 3    TIM HORTONS #123             45.00                             4,955.00
+        Aug 5    PAYROLL DEPOSIT ACME CORP                        2,500.00      7,455.00
+        Aug 8    HYDRO ONE PAYMENT            120.00                            7,335.00
+        Total Withdrawals                     165.00
+        Aug 31   Closing Balance                                               7,335.00
+        Page 1 of 1
+        """
+    }
+
+    func testPDFStatementParserUsesBalanceColumnForSignAndAmount() {
+        let result = PDFStatementParser().parse(text: rbcStatementText, pageCount: 1)
+        XCTAssertEqual(result.detectedAccountType, .debit)
+        XCTAssertEqual(result.rows.count, 3)
+
+        XCTAssertEqual(result.rows[0].descriptionText, "TIM HORTONS #123")
+        XCTAssertEqual(result.rows[0].amount, Decimal(string: "-45.00"))
+        XCTAssertEqual(result.rows[0].balance, Decimal(string: "4955.00"))
+        XCTAssertTrue(result.rows[0].derivedSignFromBalance)
+
+        XCTAssertEqual(result.rows[1].descriptionText, "PAYROLL DEPOSIT ACME CORP")
+        XCTAssertEqual(result.rows[1].amount, Decimal(string: "2500.00"))
+
+        XCTAssertEqual(result.rows[2].amount, Decimal(string: "-120.00"))
+        XCTAssertEqual(result.rows[2].date, date(2026, 8, 8))
+    }
+
+    func testPDFStatementParserFallsBackToKeywordCueWithoutABalanceColumn() {
+        let text = """
+        TD Canada Trust
+        EVERYDAY CHEQUING ACCOUNT
+        Statement from Jul 1, 2026 to Jul 31, 2026
+
+        Jul 02  MONTHLY ACCOUNT FEE            16.95
+        Jul 05  PAYROLL DEP ACME CORP       2,000.00
+        Jul 09  SHELL OIL 4471                60.25
+        """
+        let result = PDFStatementParser().parse(text: text, pageCount: 1)
+        XCTAssertEqual(result.detectedAccountType, .debit)
+        XCTAssertEqual(result.rows.count, 3)
+        XCTAssertFalse(result.rows[0].derivedSignFromBalance)
+        XCTAssertEqual(result.rows[0].amount, Decimal(string: "-16.95"))   // fee → money out
+        XCTAssertEqual(result.rows[1].amount, Decimal(string: "2000.00"))  // "payroll" cue → money in
+        XCTAssertEqual(result.rows[2].amount, Decimal(string: "-60.25"))
+    }
+
+    func testPDFStatementParserJoinsWrappedDescriptionLines() {
+        let text = """
+        Statement 2026
+        Aug 1   Opening Balance                                 1,000.00
+        Aug 3   AMAZON MARKETPLACE            45.00               955.00
+                ORDER 112-3456789 REF
+        Aug 5   CAFE                          30.00               925.00
+        """
+        let result = PDFStatementParser().parse(text: text, pageCount: 1)
+        XCTAssertEqual(result.rows.count, 2)
+        XCTAssertEqual(result.rows[0].descriptionText, "AMAZON MARKETPLACE ORDER 112-3456789 REF")
+        XCTAssertEqual(result.rows[0].amount, Decimal(string: "-45.00"))
+    }
+
+    func testPDFStatementParserSkipsHeadersTotalsAndPageMarkers() {
+        let text = """
+        BANK STATEMENT 2026
+        Account Number 001234567
+        Date Description Amount Balance
+        Aug 1 Opening Balance 500.00
+        Aug 2 GROCERY STORE 25.00 475.00
+        Page 2 of 4
+        Total Withdrawals 25.00
+        Closing Balance 475.00
+        """
+        let result = PDFStatementParser().parse(text: text, pageCount: 1)
+        XCTAssertEqual(result.rows.count, 1)
+        XCTAssertEqual(result.rows[0].descriptionText, "GROCERY STORE")
+        XCTAssertEqual(result.rows[0].amount, Decimal(string: "-25.00"))
+    }
+
+    func testPDFStatementParserProducesReviewCandidates() {
+        let parser = PDFStatementParser()
+        let result = parser.parse(text: rbcStatementText, pageCount: 1)
+        let candidates = parser.candidates(from: result)
+        XCTAssertEqual(candidates.count, 3)
+        XCTAssertEqual(candidates[0].rawMerchantDescription, "TIM HORTONS #123")
+        XCTAssertEqual(candidates[0].amount, Decimal(string: "-45.00"))
+        XCTAssertEqual(candidates[0].status, .posted)
+        XCTAssertFalse(candidates[0].validationFlags.contains(.ambiguousLayout)) // balance-derived → trusted
+    }
+
+    func testPDFStatementParserDetectsCreditCardStatements() {
+        let text = """
+        RBC Visa Platinum Statement
+        Statement Date August 31, 2026
+        Aug 3  NETFLIX.COM                    16.99   516.99
+        Aug 5  GROCERY                        40.00   556.99
+        """
+        let result = PDFStatementParser().parse(text: text, pageCount: 1)
+        XCTAssertEqual(result.detectedAccountType, .creditCard)
+        // No opening balance seed → first row falls back to the cue heuristic…
+        XCTAssertFalse(result.rows[0].derivedSignFromBalance)
+        // …but the second row's balance delta is trusted and positive (a card
+        // purchase raises the statement balance).
+        XCTAssertTrue(result.rows[1].derivedSignFromBalance)
+        XCTAssertEqual(result.rows[1].amount, Decimal(string: "40.00"))
+    }
+
     func testBackupRoundTripsThroughJSON() throws {
         let dining = makeCategory("Dining", sortOrder: 0)
         let series = RecurringPayment(merchantName: "Netflix", expectedAmount: 20, frequency: .monthly)

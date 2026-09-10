@@ -1,9 +1,12 @@
+import PDFKit
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct DataPortabilityView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var ocrReviewStore: OCRTransactionReviewStore
+    @EnvironmentObject private var nav: AppNavigationModel
 
     @Query(sort: \Transaction.transactionDate, order: .reverse) private var transactions: [Transaction]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
@@ -76,7 +79,7 @@ struct DataPortabilityView: View {
             } header: {
                 Text("Import from your bank")
             } footer: {
-                Text("Download your transactions from RBC or TD online banking as CSV or \u{201C}Quicken (QFX)\u{201D} \u{2014} or an OFX/QFX file from any other bank \u{2014} and import them here, no screenshots. Amounts are read for the account type you confirm, merchant rules are applied, and rows already imported (or that match an existing transaction) are skipped.")
+                Text("Download your transactions from RBC or TD online banking \u{2014} CSV, \u{201C}Quicken (QFX)\u{201D}, an OFX/QFX file from any other bank, or a PDF statement \u{2014} and import them here, no screenshots. A CSV/OFX file imports directly (merchant rules applied, already-seen rows skipped); a PDF opens the review screen first so you can check the parsed rows.")
             }
 
             Section {
@@ -123,7 +126,7 @@ struct DataPortabilityView: View {
         .fileImporter(
             isPresented: $isImportingBank,
             allowedContentTypes: [
-                .commaSeparatedText, .plainText, .text,
+                .commaSeparatedText, .plainText, .text, .pdf,
                 UTType(filenameExtension: "ofx") ?? .data,
                 UTType(filenameExtension: "qfx") ?? .data,
                 .data
@@ -267,6 +270,13 @@ struct DataPortabilityView: View {
         case .success(let url):
             let needsStop = url.startAccessingSecurityScopedResource()
             defer { if needsStop { url.stopAccessingSecurityScopedResource() } }
+
+            if url.pathExtension.lowercased() == "pdf",
+               let data = try? Data(contentsOf: url), let document = PDFDocument(data: data) {
+                handlePDFStatement(document)
+                return
+            }
+
             guard let text = Self.readText(from: url) else {
                 message = "Couldn't read that file as text."
                 return
@@ -284,6 +294,53 @@ struct DataPortabilityView: View {
                     ?? "Couldn't read that statement: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// A PDF statement is far less structured than CSV/OFX, so its rows go
+    /// through the same **Review** screen a screenshot import uses rather than
+    /// being saved directly.
+    private func handlePDFStatement(_ document: PDFDocument) {
+        let parser = PDFStatementParser(ocr: { image in
+            let blocks = try await VisionOCRService().recognizeText(in: image)
+            return Self.linesFromOCR(blocks)
+        })
+        Task { @MainActor in
+            let result = await parser.parse(document)
+            let candidates = parser.candidates(from: result)
+            guard !candidates.isEmpty else {
+                message = result.charactersExtracted < 40
+                    ? "Couldn't read any text from that PDF. If it's a scanned statement, try a clearer scan."
+                    : "No transactions were recognized in that PDF."
+                return
+            }
+            ocrReviewStore.pendingDefaultAccountType = result.detectedAccountType
+            ocrReviewStore.replaceCandidates(candidates, merchantRules: merchantRules)
+            message = "Found \(candidates.count) transaction\(candidates.count == 1 ? "" : "s") \u{2014} check them on the review screen."
+            nav.openReview()
+        }
+    }
+
+    /// Vision blocks → newline-separated rows (blocks on roughly the same
+    /// baseline joined left-to-right), so the statement line parser can run.
+    private static func linesFromOCR(_ blocks: [RecognizedTextBlock]) -> String {
+        let bucket = { (y: CGFloat) in (y / 0.012).rounded() }
+        let sorted = blocks.sorted { a, b in
+            let ay = bucket(a.boundingBox.midY), by = bucket(b.boundingBox.midY)
+            if ay != by { return ay > by }           // Vision's Y is bottom-up, so higher = earlier
+            return a.boundingBox.minX < b.boundingBox.minX
+        }
+        var lines: [String] = []
+        var currentBucket: CGFloat?
+        for block in sorted {
+            let b = bucket(block.boundingBox.midY)
+            if b == currentBucket, !lines.isEmpty {
+                lines[lines.count - 1] += "  " + block.text
+            } else {
+                lines.append(block.text)
+                currentBucket = b
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func runBankImport(
