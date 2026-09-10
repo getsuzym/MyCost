@@ -3660,6 +3660,209 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(rows, [["a", "b, c", "d\"e"], ["1", "2", "3"]])
     }
 
+    // MARK: - Bank statement import (RBC / TD / OFX)
+
+    func testDetectsBankStatementFormats() {
+        let svc = BankStatementImportService()
+        let rbc = "Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\nChequing,x,9/3/2026,,TIM HORTONS,,-4.50,\n"
+        XCTAssertEqual(svc.detectFormat(fileName: "rbc.csv", contents: rbc), .rbcCSV)
+        let td = "09/03/2026,TIM HORTONS,4.50,,4698.19\n09/05/2026,PAYROLL,,2500.00,7198.19\n"
+        XCTAssertEqual(svc.detectFormat(fileName: "td.csv", contents: td), .tdCSV)
+        XCTAssertEqual(svc.detectFormat(fileName: "s", contents: "OFXHEADER:100\n\n<OFX><BANKMSGSRSV1>"), .ofx)
+        XCTAssertEqual(svc.detectFormat(fileName: "s.qfx", contents: "anything"), .ofx)
+        // The app's own export must not be mistaken for a bank statement.
+        XCTAssertNil(svc.detectFormat(fileName: "MyCost.csv", contents: "Date,Merchant,Amount\n2026-09-03,Tim Hortons,4.50\n"))
+    }
+
+    func testParsesRBCCSVJoiningDescriptionAndKeepingSignedAmount() throws {
+        let csv = """
+        Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$
+        Visa,4519xxxx1234,9/3/2026,,TIM HORTONS #123,VANCOUVER BC,-45.00,
+        Visa,4519xxxx1234,9/5/2026,,PAYMENT - THANK YOU,,\"1,250.00\",
+        """
+        let statement = try BankStatementImportService().parse(contents: csv, fileName: "rbc.csv")
+        XCTAssertEqual(statement.format, .rbcCSV)
+        XCTAssertEqual(statement.accountType, .creditCard)
+        XCTAssertEqual(statement.suggestedAccountName, "RBC Visa")
+        XCTAssertEqual(statement.transactions.count, 2)
+        XCTAssertEqual(statement.transactions[0].merchant, "TIM HORTONS #123 VANCOUVER BC")
+        XCTAssertEqual(statement.transactions[0].amount, Decimal(string: "-45.00"))
+        XCTAssertEqual(statement.transactions[0].date, date(2026, 9, 3))
+        XCTAssertEqual(statement.transactions[1].amount, Decimal(string: "1250.00"))
+    }
+
+    func testParsesTDHeaderlessCSVWithdrawalAndDepositColumns() throws {
+        let csv = """
+        09/03/2026,TIM HORTONS,4.50,,4698.19
+        09/05/2026,PAYROLL DEPOSIT,,2500.00,7198.19
+        """
+        let statement = try BankStatementImportService().parse(contents: csv, fileName: "td.csv")
+        XCTAssertEqual(statement.format, .tdCSV)
+        XCTAssertNil(statement.accountType)
+        XCTAssertEqual(statement.transactions.count, 2)
+        XCTAssertEqual(statement.transactions[0].amount, Decimal(string: "-4.50"))    // withdrawal → out
+        XCTAssertEqual(statement.transactions[1].amount, Decimal(string: "2500.00")) // deposit → in
+        XCTAssertEqual(statement.transactions[0].merchant, "TIM HORTONS")
+    }
+
+    func testParsesOFXBankStatementTransactionsAccountTypeAndFITID() throws {
+        let ofx = """
+        OFXHEADER:100
+        DATA:OFXSGML
+
+        <OFX>
+        <SIGNONMSGSRSV1><SONRS><FI><ORG>RBC<FID>00003</FI></SONRS></SIGNONMSGSRSV1>
+        <BANKMSGSRSV1><STMTTRNRS><STMTRS>
+        <CURDEF>CAD
+        <BANKACCTFROM><ACCTID>1234567<ACCTTYPE>CHECKING</BANKACCTFROM>
+        <BANKTRANLIST>
+        <STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260903120000<TRNAMT>-45.00<FITID>A1<NAME>TIM HORTONS #123</STMTTRN>
+        <STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20260905<TRNAMT>2500.00<FITID>A2<NAME>PAYROLL<MEMO>ACME CORP</STMTTRN>
+        </BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>
+        """
+        let s = try BankStatementImportService().parse(contents: ofx, fileName: "rbc.ofx")
+        XCTAssertEqual(s.format, .ofx)
+        XCTAssertEqual(s.accountType, .debit)
+        XCTAssertEqual(s.currency, "CAD")
+        XCTAssertEqual(s.transactions.count, 2)
+        XCTAssertEqual(s.transactions[0].externalID, "A1")
+        XCTAssertEqual(s.transactions[0].amount, Decimal(string: "-45.00"))
+        XCTAssertEqual(s.transactions[0].date, date(2026, 9, 3))
+        XCTAssertEqual(s.transactions[1].rawDescription, "PAYROLL \u{00B7} ACME CORP")
+    }
+
+    func testParsesOFXCreditCardSectionAsCreditCard() throws {
+        let ofx = "<OFX><CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS><CURDEF>CAD<CCACCTFROM><ACCTID>5555<ACCTTYPE>CREDITLINE</CCACCTFROM><BANKTRANLIST><STMTTRN><DTPOSTED>20260903<TRNAMT>-30.00<FITID>C1<NAME>NETFLIX</STMTTRN></BANKTRANLIST></CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1></OFX>"
+        let s = try BankStatementImportService().parse(contents: ofx, fileName: "cc.qfx")
+        XCTAssertEqual(s.accountType, .creditCard)
+        XCTAssertEqual(s.transactions.count, 1)
+        XCTAssertEqual(s.transactions[0].amount, Decimal(string: "-30.00"))
+    }
+
+    func testImportStatementCreditCardFlipsSignSoAPurchaseCountsAsSpending() throws {
+        let statement = BankStatementImportService.ParsedStatement(
+            format: .ofx, suggestedAccountName: "RBC Visa", accountType: .creditCard, currency: "CAD",
+            transactions: [.init(date: date(2026, 9, 3), merchant: "NETFLIX", rawDescription: "NETFLIX",
+                                 amount: -30, externalID: "C1", checkNumber: nil)]
+        )
+        let outcome = BankStatementImportService().importStatement(
+            statement, accountName: "RBC Visa", accountType: .creditCard,
+            categories: [], accounts: [], merchantRules: [], existingTransactions: [], modelContext: context
+        )
+        XCTAssertEqual(outcome.imported, 1)
+        let t = try XCTUnwrap(try allTransactions().first)
+        XCTAssertEqual(t.amount, 30)
+        XCTAssertEqual(t.spendingAmount, 30)
+        XCTAssertEqual(t.accountType, .creditCard)
+        XCTAssertEqual(t.externalTransactionID, "C1")
+    }
+
+    func testImportStatementSkipsExactFITIDDuplicatesOnReimport() throws {
+        let svc = BankStatementImportService()
+        let statement = BankStatementImportService.ParsedStatement(
+            format: .ofx, suggestedAccountName: "RBC Chequing", accountType: .debit, currency: "CAD",
+            transactions: [
+                .init(date: date(2026, 9, 3), merchant: "TIM HORTONS", rawDescription: "TIM HORTONS", amount: -4.5, externalID: "A1", checkNumber: nil),
+                .init(date: date(2026, 9, 5), merchant: "PAYROLL", rawDescription: "PAYROLL", amount: 2500, externalID: "A2", checkNumber: nil),
+            ]
+        )
+        _ = svc.importStatement(statement, accountName: "RBC Chequing", accountType: .debit,
+                                categories: [], accounts: [], merchantRules: [], existingTransactions: [], modelContext: context)
+        try context.save()
+        let existing = try allTransactions()
+        XCTAssertEqual(existing.count, 2)
+
+        var reimport = statement
+        reimport.transactions.append(.init(date: date(2026, 9, 6), merchant: "SHELL", rawDescription: "SHELL", amount: -60, externalID: "A3", checkNumber: nil))
+        let outcome = svc.importStatement(reimport, accountName: "RBC Chequing", accountType: .debit,
+                                          categories: [], accounts: [], merchantRules: [], existingTransactions: existing, modelContext: context)
+        XCTAssertEqual(outcome.imported, 1)
+        XCTAssertEqual(outcome.duplicatesSkipped, 2)
+        XCTAssertEqual(try allTransactions().count, 3)
+    }
+
+    func testImportStatementAppliesMerchantRulesAndRemembersAccountType() throws {
+        let dining = makeCategory("Dining", sortOrder: 0)
+        let rule = MerchantRule(matchText: "tim hortons", displayName: "Tim Hortons", matchType: .contains, category: dining)
+        context.insert(rule)
+        try context.save()
+
+        let statement = BankStatementImportService.ParsedStatement(
+            format: .tdCSV, suggestedAccountName: "TD Everyday", accountType: nil, currency: nil,
+            transactions: [.init(date: date(2026, 9, 3), merchant: "TIM HORTONS #44", rawDescription: "TIM HORTONS #44",
+                                 amount: -4.5, externalID: nil, checkNumber: nil)]
+        )
+        _ = BankStatementImportService().importStatement(
+            statement, accountName: "TD Everyday", accountType: .debit,
+            categories: [dining], accounts: [], merchantRules: [rule], existingTransactions: [], modelContext: context
+        )
+        let t = try XCTUnwrap(try allTransactions().first)
+        XCTAssertEqual(t.merchantName, "Tim Hortons")
+        XCTAssertEqual(t.category?.name, "Dining")
+
+        let account = try XCTUnwrap(try context.fetch(FetchDescriptor<Account>()).first)
+        XCTAssertEqual(account.name, "TD Everyday")
+        XCTAssertEqual(account.accountType, .debit)
+    }
+
+    func testImportStatementSkipsFuzzyDuplicatesOfExistingTransactions() throws {
+        // A screenshot-imported credit-card purchase already in the store…
+        let existing = insertTransaction("Costco Wholesale", amount: 100, on: date(2026, 9, 3))
+        existing.accountName = "RBC Visa"
+        try context.save()
+        // …and the same charge in the downloaded statement (OFX gives it as -100;
+        // the credit-card sign flip makes it +100, matching the stored row).
+        let statement = BankStatementImportService.ParsedStatement(
+            format: .ofx, suggestedAccountName: "RBC Visa", accountType: .creditCard, currency: "CAD",
+            transactions: [
+                .init(date: date(2026, 9, 3), merchant: "COSTCO WHOLESALE", rawDescription: "COSTCO WHOLESALE", amount: -100, externalID: "X1", checkNumber: nil),
+                .init(date: date(2026, 9, 5), merchant: "NEW STORE", rawDescription: "NEW STORE", amount: -40, externalID: "X2", checkNumber: nil),
+            ]
+        )
+        let outcome = BankStatementImportService().importStatement(
+            statement, accountName: "RBC Visa", accountType: .creditCard,
+            categories: [], accounts: [], merchantRules: [], existingTransactions: [existing], modelContext: context
+        )
+        XCTAssertEqual(outcome.imported, 1)
+        XCTAssertEqual(outcome.duplicatesSkipped, 1)
+    }
+
+    func testExternalTransactionIDSurvivesBackupRoundTrip() throws {
+        let t = insertTransaction("Shell", amount: 60, on: date(2026, 9, 3))
+        t.externalTransactionID = "FITID-999"
+        try context.save()
+        let portability = DataPortabilityService()
+        let backup = portability.makeBackup(
+            transactions: [t], categories: [], accounts: [], merchantRules: [], recurringPayments: [], budgets: []
+        )
+        let decoded = try portability.decode(try portability.encode(backup))
+        XCTAssertEqual(decoded.transactions.first?.externalTransactionID, "FITID-999")
+    }
+
+    func testPreBankImportBackupJSONStillDecodes() throws {
+        // A backup whose transaction objects have no "externalTransactionID" key.
+        let json = """
+        {"version":1,"exportedAt":"2026-01-01T00:00:00Z","categories":[],"accounts":[],
+         "merchantRules":[],"recurringPayments":[],"budgets":[],
+         "transactions":[{"id":"\(UUID().uuidString)","accountName":"Default","merchantName":"Shell",
+           "originalDescription":"Shell","amount":60,"transactionDate":"2026-09-03T00:00:00Z",
+           "statusRawValue":"posted","isExcluded":false,"excludedReason":"","isRecurring":false,"isIncome":false,
+           "duplicateStateRawValue":"unique","note":"","normalizedAmount":60,
+           "transactionDirectionRawValue":"unknown","accountTypeRawValue":"other","countsAsSpending":true,
+           "needsDirectionReview":false,"spendingCountOverridden":false}]}
+        """
+        let decoded = try DataPortabilityService().decode(Data(json.utf8))
+        XCTAssertNil(decoded.transactions.first?.externalTransactionID)
+    }
+
+    func testFlexibleDateParsingHandlesOFXAndNorthAmericanFormats() {
+        XCTAssertEqual(BankStatementImportService.parseFlexibleDate("20260903"), date(2026, 9, 3))
+        XCTAssertEqual(BankStatementImportService.parseFlexibleDate("9/3/2026"), date(2026, 9, 3))
+        XCTAssertEqual(BankStatementImportService.parseFlexibleDate("09/03/2026"), date(2026, 9, 3))
+        XCTAssertEqual(BankStatementImportService.parseFlexibleDate("2026-09-03"), date(2026, 9, 3))
+        XCTAssertNil(BankStatementImportService.parseFlexibleDate("not a date"))
+    }
+
     func testBackupRoundTripsThroughJSON() throws {
         let dining = makeCategory("Dining", sortOrder: 0)
         let series = RecurringPayment(merchantName: "Netflix", expectedAmount: 20, frequency: .monthly)

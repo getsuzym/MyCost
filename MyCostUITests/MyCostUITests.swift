@@ -137,6 +137,20 @@ final class MyCostUITests: XCTestCase {
         XCTAssertTrue(previousMonth.isHittable, "Top content row should stay reachable alongside the review banner")
     }
 
+    func testBankStatementImportEntryPointIsUnderSettingsBackup() {
+        app.tabBars.buttons["More"].tap()
+        app.buttons["more.settings"].tap()
+        XCTAssertTrue(app.buttons["settings.backup"].waitForExistence(timeout: 5))
+        app.buttons["settings.backup"].tap()
+
+        XCTAssertTrue(app.navigationBars["Export & Backup"].waitForExistence(timeout: 5))
+        let bankImport = app.buttons["data.importBank"]
+        XCTAssertTrue(bankImport.waitForExistence(timeout: 5))
+        XCTAssertTrue(bankImport.isHittable)
+        // The spreadsheet CSV import stays a separate entry point.
+        XCTAssertTrue(app.buttons["data.importCSV"].exists)
+    }
+
     // MARK: - Add-transaction crash guards
 
     func testAddFirstTransactionThenDashboardRebuildDoesNotCrash() {

@@ -353,6 +353,9 @@ struct DataPortabilityService {
         var categoryID: UUID?; var recurringPaymentID: UUID?
         /// Optional, not defaulted — see the comment on `Backup.tags`.
         var tagIDs: [UUID]?
+        /// The bank's `FITID` for a statement-imported row; `nil` otherwise and
+        /// on any backup made before bank-statement import existed.
+        var externalTransactionID: String?
         /// Splits are owned by their transaction, so they're embedded here
         /// rather than a separate top-level array. Optional for the same
         /// pre-tags/pre-splits backward-compatibility reason.
@@ -397,6 +400,7 @@ struct DataPortabilityService {
                           needsDirectionReview: $0.needsDirectionReview, spendingCountOverridden: $0.spendingCountOverridden,
                           categoryID: $0.category?.id, recurringPaymentID: $0.recurringPayment?.id,
                           tagIDs: $0.tags.map(\.id),
+                          externalTransactionID: $0.externalTransactionID,
                           splits: $0.splits.map { TransactionSplitDTO(id: $0.id, amount: $0.amount, note: $0.note, categoryID: $0.category?.id) })
         }
         return backup
@@ -487,7 +491,8 @@ struct DataPortabilityService {
                 countsAsSpending: dto.countsAsSpending, needsDirectionReview: dto.needsDirectionReview,
                 spendingCountOverridden: dto.spendingCountOverridden,
                 category: dto.categoryID.flatMap { categoriesByID[$0] },
-                recurringPayment: dto.recurringPaymentID.flatMap { recurringByID[$0] }
+                recurringPayment: dto.recurringPaymentID.flatMap { recurringByID[$0] },
+                externalTransactionID: dto.externalTransactionID
             )
             modelContext.insert(transaction)
             let dtoTags = (dto.tagIDs ?? []).compactMap { tagsByID[$0] }

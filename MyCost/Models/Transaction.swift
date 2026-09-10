@@ -180,6 +180,12 @@ final class Transaction {
     var isIncome: Bool = false
     var duplicateState: DuplicateState
     var note: String
+    /// The bank's own id for this transaction (OFX `FITID`), when it was
+    /// imported from a statement file. Lets a re-imported statement skip rows
+    /// that are already in the store exactly, instead of relying on fuzzy
+    /// matching. `nil` for manually added / screenshot / CSV rows. Defaulted →
+    /// lightweight migration.
+    var externalTransactionID: String? = nil
     var createdAt: Date
     var updatedAt: Date
 
@@ -235,6 +241,7 @@ final class Transaction {
         spendingCountOverridden: Bool = false,
         category: Category? = nil,
         recurringPayment: RecurringPayment? = nil,
+        externalTransactionID: String? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -260,6 +267,7 @@ final class Transaction {
         self.spendingCountOverridden = spendingCountOverridden
         self.category = category
         self.recurringPayment = recurringPayment
+        self.externalTransactionID = externalTransactionID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
