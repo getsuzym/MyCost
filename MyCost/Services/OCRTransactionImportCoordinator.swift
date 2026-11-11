@@ -46,6 +46,15 @@ struct OCRTransactionImportCoordinator {
                 for: incomingSnapshot,
                 against: stagedSnapshots
             ) {
+                if drafts[index].duplicateSummary != nil,
+                   drafts[index].duplicateDecision != .review {
+                    drafts[index].duplicateMatchID = highMatch.existing.id
+                    if drafts[index].duplicateDecision == .keepBoth {
+                        stagedSnapshots.append(incomingSnapshot)
+                    }
+                    continue
+                }
+
                 drafts[index].isSelected = false
                 drafts[index].duplicateMatchID = highMatch.existing.id
                 drafts[index].duplicateSummary = "High-confidence duplicate was not selected for import."

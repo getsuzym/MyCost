@@ -1611,6 +1611,51 @@ final class MyCostTests: XCTestCase {
         XCTAssertEqual(outcome.persistedTransactionCount, 1)
     }
 
+    func testHighConfidenceDuplicateCanBeKeptAndImportedAfterReview() throws {
+        let existing = Transaction(
+            merchantName: "Mortgage", originalDescription: "Mortgage 2500",
+            amount: 2500, transactionDate: date(2026, 8, 1), status: .posted
+        )
+        context.insert(existing)
+        try context.save()
+
+        var drafts = [draft(merchant: "Mortgage", amount: 2500, on: date(2026, 8, 1), status: .posted)]
+        let existingSnapshots = [DuplicateTransactionSnapshot(transaction: existing)]
+
+        let initialScan = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &drafts,
+            existingTransactions: existingSnapshots
+        )
+
+        XCTAssertEqual(initialScan.blockedCount, 1)
+        XCTAssertFalse(drafts[0].isSelected)
+
+        drafts[0].isSelected = true
+        drafts[0].duplicateDecision = .keepBoth
+
+        let reviewedScan = OCRTransactionImportCoordinator().flagDuplicateDrafts(
+            drafts: &drafts,
+            existingTransactions: existingSnapshots
+        )
+
+        XCTAssertEqual(reviewedScan.blockedCount, 0)
+        XCTAssertTrue(drafts[0].isSelected)
+        XCTAssertEqual(drafts[0].duplicateDecision, .keepBoth)
+
+        let outcome = OCRTransactionImportService().importDrafts(
+            drafts.filter(\.isSelected),
+            categories: [],
+            existingTransactions: [existing],
+            existingRules: [],
+            modelContext: context
+        )
+
+        XCTAssertNil(outcome.saveError)
+        XCTAssertEqual(outcome.insertedTransactionIDs.count, 1)
+        XCTAssertEqual(outcome.persistedTransactionCount, 2)
+        XCTAssertTrue(try historyTransactions().allSatisfy { $0.duplicateState == .unique })
+    }
+
     func testImportServiceVerifiesPersistenceWithAPostSaveFetch() throws {
         let outcome = OCRTransactionImportService().importDrafts(
             [draft(merchant: "A", amount: 1, on: date(2026, 8, 1)),
